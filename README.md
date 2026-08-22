@@ -1,15 +1,18 @@
 # Wick
 
-**Free agent browser.** A thin flame for machines.
+**The agent browser.** Fast. Precise. Professional.
 
-CLI for AI agents and scripts: a fast headless read path, optional Chromium for clicks/tabs/PDF/screenshots — no paid browser SaaS.
+Not a human browser with a side door for bots — a tool built so **agents** can see the page, pick a target, and finish the job. Headless by default. Full enough when the work gets close: tabs, forms, PDF, downloads, sessions, shields.
+
+*Wick brothers: light recon + heavy contact — one mission, clean tools, no wasted motion.*
 
 ```bash
-wick open https://example.com/
-wick probe https://example.com/ --tree
+wick snap https://example.com/ --fast
+wick elements https://example.com/
 wick act goto https://example.com/
-wick pdf --url https://example.com/ -o page.pdf
 ```
+
+**Agents:** start with [AGENTS.md](AGENTS.md) and [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
 
 ## Why Wick
 
@@ -48,9 +51,11 @@ Data directory: `~/.wick/` (override with `WICK_HOME`).
 ## Quick commands
 
 ```bash
-# Read path (Lightpanda)
+# Observe (Lightpanda — light recon)
 wick ensure
-wick open URL                 # markdown
+wick snap URL --fast          # agent situation report
+wick elements URL             # interactive hints
+wick open URL                 # full markdown
 wick tree URL                 # semantic tree
 wick batch URL URL…           # multi-fetch
 wick links URL --limit 20
@@ -62,7 +67,7 @@ wick session new myjob
 WICK_SESSION=myjob wick open URL
 wick session save myjob
 
-# Chromium path (forms, tabs, PDF)
+# Act (Chromium — heavy contact)
 wick act goto URL
 wick act click "css=button.submit"
 wick act fill "css=input[name=q]" "hello"
@@ -108,18 +113,21 @@ wick-browser/
   lib/               # daemon, shields, history, chrome actions
   scripts/install.sh
   tests/smoke.sh
-  docs/              # security, headless model, shields, command map
+  docs/              # agent browser, security, headless, shields
   examples/          # sample playbooks
   Makefile
   ABOUT.md
+  AGENTS.md          # agent brief
   LICENSE            # MIT (+ third-party engine note)
 ```
 
 ## Documentation
 
+- [AGENTS.md](AGENTS.md) — **start here if you are an agent**
+- [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md) — observe / act / session / playbook architecture  
 - [ABOUT.md](ABOUT.md) — product story & non-goals  
 - [docs/SECURITY.md](docs/SECURITY.md) — CDP, shields honesty, proxy, `WICK_HOME`  
-- [docs/HEADLESS.md](docs/HEADLESS.md) — how headless works here  
+- [docs/HEADLESS.md](HEADLESS.md) — how headless works here  
 - [docs/SHIELDS-AND-ACTIONS.md](docs/SHIELDS-AND-ACTIONS.md) — privacy + act surface  
 - [docs/WICK-0.5.md](docs/WICK-0.5.md) — full command map  
 

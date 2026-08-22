@@ -1,8 +1,9 @@
 [
+  {"action": "snap_note", "note": "Use CLI: wick snap URL --fast then act on elements"},
   {"action": "open", "url": "https://example.com/", "max": 2000},
-  {"action": "links", "url": "https://example.com/"},
   {"action": "goto", "url": "https://example.com/"},
+  {"action": "scroll", "direction": "down", "amount": 600},
   {"action": "tab_new", "url": "https://example.com/"},
   {"action": "tab_list"},
-  {"action": "pdf", "out": "/tmp/wick-example.pdf"}
+  {"action": "pdf", "out": "/tmp/wick-agent.pdf"}
 ]

@@ -2,6 +2,9 @@
 
 ## What it is
 
+Wick is built for **agents** the way a professional kit is built for specialists: observe, decide, act — no clutter. The “Wick brothers” idea is simple: two engines that work together (light recon + heavy contact), not one bloated browser pretending to be everything.
+
+
 **Wick** is a free, open-source **agent browser**: a command-line tool that helps AI agents and automation scripts read the web, block common trackers, keep sessions isolated, and — when needed — drive a real Chromium for clicks, tabs, PDFs, and downloads.
 
 The name is intentional: a **wick** is a thin flame. Agents rarely need a full desktop browser burning all the time. Wick keeps a light engine for reading and only lights Chromium when interaction or pixels matter.
@@ -39,7 +42,7 @@ The name is intentional: a **wick** is a thin flame. Agents rarely need a full d
 
 ## Version
 
-Public package tracks the **0.5** command surface (history, tabs, PDF, shields, sessions, playbooks). See `docs/WICK-0.5.md`.
+Public package tracks the **0.6** command surface (`snap` / `elements`, history, tabs, PDF, shields, sessions, playbooks). See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md) and `docs/WICK-0.5.md`.
 
 ## Credits
 

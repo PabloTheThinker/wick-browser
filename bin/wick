@@ -36,8 +36,12 @@ try:
     import history as wick_history
 except Exception:
     wick_history = None
+try:
+    import elements as wick_elements
+except Exception:
+    wick_elements = None
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 
 def _hist(kind: str, **kw) -> None:
@@ -244,7 +248,7 @@ def start_lp() -> dict:
         "--block-private-networks",
         "--http-cache-dir", str(cache),
         "--http-cache-entry-limit", "2000",
-        "--user-agent-suffix", " Wick/0.5",
+        "--user-agent-suffix", " Wick/0.6",
         "--disable-workers",
     ]
     if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
@@ -367,7 +371,7 @@ def lp_fetch(
     max_chars: int = 12000,
     *,
     wait_until: str = "load",
-    wait_ms: int | None = None,
+    wait_ms: int | None = None,  # default applied below
     wait_selector: str | None = None,
     strip: list[str] | None = None,
     terminate_ms: int | None = None,
@@ -400,7 +404,7 @@ def lp_fetch(
     if wait_until and wait_until != "none":
         cmd.extend(["--wait-until", wait_until])
     # default wait_ms tighter for agents (LP default 5000)
-    wms = 3500 if wait_ms is None else wait_ms
+    wms = 2000 if wait_ms is None else wait_ms
     cmd.extend(["--wait-ms", str(wms)])
     if wait_selector:
         cmd.extend(["--wait-selector", wait_selector])
@@ -443,7 +447,7 @@ def lp_fetch(
     if with_frames:
         cmd.append("--with-frames")
     # identify as Wick agent (suffix ok; full UA cannot contain Mozilla)
-    cmd.extend(["--user-agent-suffix", " Wick/0.5"])
+    cmd.extend(["--user-agent-suffix", " Wick/0.6"])
     if extra_args:
         cmd.extend(extra_args)
 
@@ -568,7 +572,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         home_mode = oct(HOME.stat().st_mode & 0o777)
     except OSError:
         home_mode = "?"
-    print("product: Wick (free agent browser)")
+    print("product: Wick — agent browser (precision tools for machines)")
     print(f"version: {VERSION}")
     print(f"home: {HOME} mode={home_mode}")
     print(f"disk: {disk_usage(HOME)}")
@@ -683,7 +687,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         dump=args.dump,
         max_chars=args.max,
         wait_until=getattr(args, "wait_until", "load") or "load",
-        wait_ms=getattr(args, "wait_ms", 3500),
+        wait_ms=getattr(args, "wait_ms", 2000),
         wait_selector=getattr(args, "wait_selector", None),
         strip=[] if getattr(args, "no_strip", False) else ["ui", "invisible"],
         block_private=not getattr(args, "allow_private", False),
@@ -705,10 +709,13 @@ def cmd_open(args: argparse.Namespace) -> int:
             dump=args.dump,
             max_chars=args.max,
             wait_until=getattr(args, "wait_until", "load") or "load",
-            wait_ms=getattr(args, "wait_ms", 3500),
+            wait_ms=getattr(args, "wait_ms", 2000),
             wait_selector=getattr(args, "wait_selector", None),
             strip=[] if getattr(args, "no_strip", False) else ["ui", "invisible"],
         )
+        if getattr(args, "fast", False):
+            _kw["wait_until"] = "domcontentloaded"
+            _kw["wait_ms"] = min(int(_kw["wait_ms"] or 2000), 1200)
         r = lp_fetch(args.url, **_kw)
         if r.get("ok") and getattr(args, "stats", False) and wick_stats is not None:
             def _build(cmd):
@@ -724,7 +731,7 @@ def cmd_open(args: argparse.Namespace) -> int:
                 r["stats"] = wick_stats.metrics_pass(
                     lp_bin, args.url,
                     build_shield_cmd=_build,
-                    wait_ms=int(_kw["wait_ms"] or 3500),
+                    wait_ms=int(_kw["wait_ms"] or 2000),
                     wait_until=_kw["wait_until"] or "load",
                 )
             except Exception as e:
@@ -1073,7 +1080,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             results.append({"i": i, "ok": False, "error": "step_not_object"})
             continue
         act = step.get("action") or step.get("op")
-        if act in ("open", "fetch", "probe", "tree", "links"):
+        if act in ("open", "fetch", "probe", "tree", "links", "snap", "elements"):
             url = step.get("url")
             if act == "open":
                 r = lp_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 8000))
@@ -1099,7 +1106,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if r.get("ok"):
                     r = {"ok": True, "url": url, "links": extract_md_links(r.get("content") or "")}
             results.append({"i": i, "action": act, "result": r})
-        elif act in ("goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "shot", "back", "forward", "reload", "pdf", "screenshot", "tab_new", "tab_list", "cookies"):
+        elif act in ("goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "shot", "back", "forward", "reload", "scroll", "hover", "pdf", "screenshot", "tab_new", "tab_list", "cookies"):
             if act == "shot":
                 out = step.get("out") or str(SHOTS / f"run-{i}.png")
                 rc = run_pw("action_shot.py", out, "viewport")
@@ -1126,6 +1133,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                     rest = []
                 elif act == "reload":
                     rest = []
+                elif act == "scroll":
+                    rest = [step.get("direction") or "down", str(step.get("amount") or 800)]
+                elif act == "hover":
+                    rest = [step["selector"]]
                 elif act == "pdf":
                     rest = [step.get("out") or str(HOME / "downloads" / "run.pdf")]
                 elif act == "screenshot":
@@ -1153,10 +1164,18 @@ def cmd_run(args: argparse.Namespace) -> int:
                 )
                 results.append({"i": i, "action": act, "result": json.loads(out.decode())})
         else:
-            results.append({"i": i, "ok": False, "error": f"unknown_action {act}"})
+            # Soft-ignore: record ok:false, continue playbook, do not fail the run.
+            results.append({
+                "i": i,
+                "action": act,
+                "ok": False,
+                "error": f"unknown_action {act}",
+                "soft": True,
+            })
     ok = all(
         (x.get("result") or {}).get("ok", x.get("ok", False)) is not False
         for x in results
+        if not x.get("soft")
     )
     print(json.dumps({"ok": ok, "product": "wick", "steps": len(results), "results": results}, ensure_ascii=False, default=str))
     return 0 if ok else 1
@@ -1245,7 +1264,7 @@ def cmd_get(args: argparse.Namespace) -> int:
     # curl path
     name = url.rstrip("/").split("/")[-1].split("?")[0] or "download.bin"
     dest = dest or (out_dir / name)
-    cmd = ["curl", "-fsSL", "-L", "--max-time", "120", "-A", "Wick/0.5", "-o", str(dest), url]
+    cmd = ["curl", "-fsSL", "-L", "--max-time", "120", "-A", "Wick/0.6", "-o", str(dest), url]
     proxy = None
     if wick_shields:
         proxy = wick_shields.resolve_proxy()
@@ -1340,6 +1359,106 @@ def cmd_tabs(args: argparse.Namespace) -> int:
         env=env,
     )
     print(out.decode().strip())
+    return 0
+
+
+
+def cmd_snap(args: argparse.Namespace) -> int:
+    """One-shot agent snapshot: status, title, markdown, links, interactive elements.
+
+    Built for agent loops — one tool call, maximum situation awareness.
+    """
+    wait = 1200 if getattr(args, "fast", False) else getattr(args, "wait_ms", 2000)
+    md = lp_fetch(
+        args.url,
+        dump="markdown",
+        max_chars=args.max,
+        wait_until="domcontentloaded" if args.fast else (args.wait_until or "load"),
+        wait_ms=wait,
+        strip=[] if args.no_strip else ["ui", "invisible"],
+    )
+    if not md.get("ok"):
+        print(json.dumps(md, ensure_ascii=False))
+        return 1
+    text = md.get("content") or ""
+    links = extract_md_links(text)
+    title = None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("# "):
+            title = s[2:].strip()
+            break
+    tree_r = lp_fetch(
+        args.url,
+        dump="semantic_tree_text",
+        max_chars=args.tree_max,
+        wait_until="domcontentloaded" if args.fast else (args.wait_until or "load"),
+        wait_ms=wait,
+        strip=["ui", "invisible"],
+    )
+    elements = []
+    if tree_r.get("ok") and wick_elements is not None:
+        elements = wick_elements.interactive_only(
+            wick_elements.parse_tree_text(tree_r.get("content") or ""),
+            limit=args.elements,
+        )
+    out = {
+        "ok": True,
+        "product": "wick",
+        "version": VERSION,
+        "mode": "agent_snap",
+        "url": md.get("url") or args.url,
+        "http_status": md.get("http_status"),
+        "http_ok": md.get("http_ok"),
+        "title": title,
+        "ms": (md.get("ms") or 0) + (tree_r.get("ms") or 0),
+        "chars": md.get("chars"),
+        "excerpt": re.sub(r"\s+", " ", text).strip()[: args.excerpt],
+        "markdown": text if args.full else None,
+        "link_count": len(links),
+        "links": links[: args.link_limit],
+        "elements": elements,
+        "element_count": len(elements),
+        "tree_chars": tree_r.get("chars"),
+        "fast": bool(args.fast),
+        "hint": "Use elements[].hint with wick act click/fill on Chromium path; or wick open for full markdown.",
+    }
+    if not args.full:
+        out.pop("markdown", None)
+    _hist("snap", url=out["url"], http_ok=out.get("http_ok"), ms=out.get("ms"), elements=out.get("element_count"))
+    print(json.dumps(out, ensure_ascii=False))
+    if args.fail_http and not out.get("http_ok"):
+        return 2
+    return 0
+
+
+def cmd_elements(args: argparse.Namespace) -> int:
+    """List interactive elements from semantic tree (agent click targets)."""
+    r = lp_fetch(
+        args.url,
+        dump="semantic_tree_text",
+        max_chars=args.max,
+        wait_until=args.wait_until or "load",
+        wait_ms=args.wait_ms,
+        strip=["ui", "invisible"],
+    )
+    if not r.get("ok"):
+        print(json.dumps(r, ensure_ascii=False))
+        return 1
+    if wick_elements is None:
+        print(json.dumps({"ok": False, "error": "elements_module_missing"}))
+        return 1
+    all_e = wick_elements.parse_tree_text(r.get("content") or "")
+    hit = wick_elements.interactive_only(all_e, limit=args.limit) if not args.all else all_e[: args.limit]
+    print(json.dumps({
+        "ok": True,
+        "product": "wick",
+        "url": r.get("url") or args.url,
+        "http_ok": r.get("http_ok"),
+        "count": len(hit),
+        "elements": hit,
+        "ms": r.get("ms"),
+    }, ensure_ascii=False))
     return 0
 
 
@@ -1440,7 +1559,7 @@ def _add_json_only(p: argparse.ArgumentParser) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="wick",
-        description="Wick — free agent browser. Thin flame for machines. No paid API.",
+        description="Wick — agent browser. Fast. Precise. No paid API. The standard for machine operators.",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -1462,7 +1581,7 @@ def main() -> int:
     p.add_argument("--dump", default="markdown", choices=["markdown", "html", "semantic_tree", "semantic_tree_text"])
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--wait-until", default="load", choices=["load", "domcontentloaded", "networkalmostidle", "networkidle", "done", "none"])
-    p.add_argument("--wait-ms", type=int, default=3500)
+    p.add_argument("--wait-ms", type=int, default=2000)
     p.add_argument("--wait-selector")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--no-cache", action="store_true")
@@ -1477,12 +1596,13 @@ def main() -> int:
     p.add_argument("--shot", action="store_true")
     p.add_argument("--out")
     p.add_argument("--wait-until", default="load")
-    p.add_argument("--wait-ms", type=int, default=3500)
+    p.add_argument("--wait-ms", type=int, default=2000)
     p.add_argument("--wait-selector")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true", help="exit 2 when HTTP status is not OK")
     p.add_argument("--stats", action="store_true", help="attach request counters (shields proof)")
     p.add_argument("--save-session", action="store_true", help="save cookie jar into session load")
+    p.add_argument("--fast", action="store_true", help="faster wait (domcontentloaded, 1200ms)")
     _add_json_only(p)
 
     p = sub.add_parser("links", help="Extract markdown links as JSON {text,href}")
@@ -1497,7 +1617,7 @@ def main() -> int:
     p.add_argument("--max", type=int, default=80000, help="cap tree text (big sites can explode)")
     p.add_argument("--json-tree", action="store_true", help="full semantic_tree JSON")
     p.add_argument("--wait-until", default="load")
-    p.add_argument("--wait-ms", type=int, default=3500)
+    p.add_argument("--wait-ms", type=int, default=2000)
     p.add_argument("--wait-selector")
     p.add_argument("--full-chrome", action="store_true", help="do not strip ui/css")
     _add_json_only(p)
@@ -1507,7 +1627,7 @@ def main() -> int:
     p.add_argument("--dump", default="markdown")
     p.add_argument("--max", type=int, default=8000)
     p.add_argument("--wait-until", default="load")
-    p.add_argument("--wait-ms", type=int, default=3500)
+    p.add_argument("--wait-ms", type=int, default=2000)
     _add_json_only(p)
 
 
@@ -1549,7 +1669,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("act", help="Chromium interactive action (goto/click/fill/press/wait/eval/content)")
-    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "back", "forward", "reload", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies"])
+    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies"])
     p.add_argument("rest", nargs="*", help="action args (selector, text, url, ...)")
     _add_json_only(p)
 
@@ -1560,13 +1680,37 @@ def main() -> int:
     p = sub.add_parser("metrics", help="Lightpanda Prometheus metrics from serve CDP")
     _add_json_only(p)
 
+    p = sub.add_parser("snap", help="Agent one-shot snapshot: title, excerpt, links, elements")
+    p.add_argument("url")
+    p.add_argument("--max", type=int, default=12000)
+    p.add_argument("--excerpt", type=int, default=600)
+    p.add_argument("--elements", type=int, default=40)
+    p.add_argument("--link-limit", type=int, default=25)
+    p.add_argument("--tree-max", type=int, default=60000)
+    p.add_argument("--wait-until", default="load")
+    p.add_argument("--wait-ms", type=int, default=2000)
+    p.add_argument("--fast", action="store_true", help="domcontentloaded + 1200ms wait")
+    p.add_argument("--full", action="store_true", help="include full markdown body")
+    p.add_argument("--no-strip", action="store_true")
+    p.add_argument("--fail-http", action="store_true")
+    _add_json_only(p)
+
+    p = sub.add_parser("elements", help="Interactive element list for agent clicks")
+    p.add_argument("url")
+    p.add_argument("--limit", type=int, default=40)
+    p.add_argument("--max", type=int, default=80000)
+    p.add_argument("--all", action="store_true", help="include non-interactive nodes")
+    p.add_argument("--wait-until", default="load")
+    p.add_argument("--wait-ms", type=int, default=2000)
+    _add_json_only(p)
+
     p = sub.add_parser("probe", help="Compact agent brief: status, title, links, excerpt")
     p.add_argument("url")
     p.add_argument("--max", type=int, default=20000)
     p.add_argument("--excerpt", type=int, default=400)
     p.add_argument("--link-sample", type=int, default=8)
     p.add_argument("--wait-until", default="load")
-    p.add_argument("--wait-ms", type=int, default=3500)
+    p.add_argument("--wait-ms", type=int, default=2000)
     p.add_argument("--wait-selector")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--tree", action="store_true", help="also skim semantic tree sizes")
@@ -1577,7 +1721,7 @@ def main() -> int:
     p = sub.add_parser("xexam", help="Cross-exam raw Lightpanda vs Wick on one URL")
     p.add_argument("url")
     p.add_argument("--wait-until", default="load")
-    p.add_argument("--wait-ms", type=int, default=3500)
+    p.add_argument("--wait-ms", type=int, default=2000)
     _add_json_only(p)
 
     p = sub.add_parser("goto")
@@ -1622,6 +1766,8 @@ def main() -> int:
         "act": cmd_act,
         "run": cmd_run,
         "probe": cmd_probe,
+        "snap": cmd_snap,
+        "elements": cmd_elements,
         "xexam": cmd_xexam,
         "goto": cmd_goto,
         "shot": cmd_shot,

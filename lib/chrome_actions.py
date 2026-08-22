@@ -174,6 +174,22 @@ def main() -> int:
                 dest.write_bytes(body)
                 print(json.dumps({"ok": True, "path": str(dest), "bytes": len(body), "via": "request"}))
 
+        elif action == "scroll":
+            direction = (args[0] if args else "down").lower()
+            amount = int(args[1]) if len(args) > 1 else 800
+            dy = amount if direction in ("down", "d") else -amount
+            if direction in ("left", "l"):
+                page.mouse.wheel(-amount, 0)
+            elif direction in ("right", "r"):
+                page.mouse.wheel(amount, 0)
+            else:
+                page.mouse.wheel(0, dy)
+            print(json.dumps({"ok": True, "scrolled": direction, "amount": amount, "url": page.url}))
+
+        elif action == "hover":
+            page.hover(args[0], timeout=15000)
+            print(json.dumps({"ok": True, "hovered": args[0]}))
+
         elif action == "cookies":
             print(json.dumps({"ok": True, "cookies": ctx.cookies()}, default=str))
 
