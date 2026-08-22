@@ -42,7 +42,7 @@ The name is intentional: a **wick** is a thin flame. Agents rarely need a full d
 
 ## Version
 
-Public package tracks the **0.6** command surface (`snap` / `elements`, history, tabs, PDF, shields, sessions, playbooks). See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md) and `docs/WICK-0.5.md`.
+Public package tracks the **0.6.1** command surface (`snap` / `plan` / `ask` / `elements`, history, tabs, PDF, shields, sessions, playbooks). See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md) and [docs/WICK-0.6.md](docs/WICK-0.6.md).
 
 ## Credits
 

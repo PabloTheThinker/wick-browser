@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Unit tests for lib/elements.py (semantic tree parsing + fuzzy ask helpers)."""
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+_LIB = Path(__file__).resolve().parents[1] / "lib"
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+
+import elements  # noqa: E402
+
+
+SAMPLE_TREE = """
+1 document
+  2 [i] link 'More information'
+  3 heading 'Example Domain'
+  4 [i] button 'Go'
+  5 textbox 'Search'
+  6 paragraph 'Learn more about domains'
+""".strip()
+
+
+class TestParseTree(unittest.TestCase):
+    def test_parse_tree_text_roles_and_names(self):
+        els = elements.parse_tree_text(SAMPLE_TREE)
+        by_role = {e["role"]: e for e in els if e.get("name")}
+        self.assertEqual(by_role["link"]["name"], "More information")
+        self.assertTrue(by_role["link"]["interactive"])
+        self.assertEqual(by_role["button"]["name"], "Go")
+        self.assertEqual(by_role["textbox"]["name"], "Search")
+
+    def test_hint_for_link(self):
+        els = elements.parse_tree_text("12 [i] link 'More information'")
+        self.assertEqual(els[0]["hint"], 'role=link[name="More information"]')
+
+    def test_interactive_only_limits(self):
+        all_e = elements.parse_tree_text(SAMPLE_TREE)
+        hit = elements.interactive_only(all_e, limit=2)
+        self.assertEqual(len(hit), 2)
+        self.assertTrue(all(e["interactive"] for e in hit))
+
+
+class TestFuzzyMatch(unittest.TestCase):
+    def test_query_words_skips_short_tokens(self):
+        self.assertEqual(elements.query_words("a x more info"), ["more", "info"])
+
+    def test_fuzzy_score_substrings(self):
+        words = elements.query_words("more information")
+        self.assertEqual(elements.fuzzy_score("More information here", words), 2)
+
+    def test_filter_links_by_text_and_href(self):
+        links = [
+            {"text": "More information", "href": "https://example.com/docs/domains"},
+            {"text": "Home", "href": "https://example.com/"},
+        ]
+        hit = elements.filter_links(links, "docs domains")
+        self.assertEqual(len(hit), 1)
+        self.assertIn("docs", hit[0]["href"])
+
+    def test_filter_elements_by_name(self):
+        els = elements.parse_tree_text(SAMPLE_TREE)
+        hit = elements.filter_elements(els, "search")
+        self.assertEqual(len(hit), 1)
+        self.assertEqual(hit[0]["role"], "textbox")
+
+
+class TestPlanSuggestions(unittest.TestCase):
+    def test_plan_includes_open_and_click(self):
+        els = elements.interactive_only(elements.parse_tree_text(SAMPLE_TREE))
+        links = [{"text": "More information", "href": "https://example.com/docs/domains"}]
+        plan = elements.plan_suggestions(
+            url="https://example.com/",
+            title="Example Domain",
+            excerpt="Example Domain. This domain is for use in documentation.",
+            links=links,
+            elements=els,
+            click_limit=2,
+        )
+        actions = {s["action"] for s in plan}
+        self.assertIn("open", actions)
+        self.assertIn("click", actions)
+        self.assertIn("screenshot", actions)
+        clicks = [s for s in plan if s["action"] == "click"]
+        self.assertTrue(any("role=link" in (s.get("hint") or "") for s in clicks))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -7,9 +7,10 @@ Not a human browser with a side door for bots — a tool built so **agents** can
 *Wick brothers: light recon + heavy contact — one mission, clean tools, no wasted motion.*
 
 ```bash
-wick snap https://example.com/ --fast
-wick elements https://example.com/
-wick act goto https://example.com/
+wick snap https://example.com/ --fast                  # observe: title, excerpt, links, targets
+wick plan https://example.com/ --fast                  # suggested next actions (cmd + why)
+wick ask  https://example.com/ --q "more information"  # filter targets by query — no LLM
+wick act  click 'role=link[name="More information"]'   # act: hints resolve directly
 ```
 
 **Agents:** start with [AGENTS.md](AGENTS.md) and [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
@@ -19,6 +20,7 @@ wick act goto https://example.com/
 | Need | Wick |
 |------|------|
 | Agent-friendly page text | Markdown / semantic tree (Lightpanda) |
+| Next-step planning | `plan` (goal-agnostic suggestions), `ask` (fuzzy target filter, no LLM) |
 | Less RAM than always-on Chrome | Lightpanda ~tens of MB; Chromium on demand |
 | Tracker / ad blocking | EasyList + EasyPrivacy + Fanboy + custom URL blocks |
 | Sessions | Isolated cookie jars + Chromium profiles |
@@ -51,9 +53,11 @@ Data directory: `~/.wick/` (override with `WICK_HOME`).
 ## Quick commands
 
 ```bash
-# Observe (Lightpanda — light recon)
+# Observe & plan (Lightpanda — light recon)
 wick ensure
 wick snap URL --fast          # agent situation report
+wick plan URL --fast          # suggested next actions
+wick ask URL --q "terms"      # filter links/elements by query
 wick elements URL             # interactive hints
 wick open URL                 # full markdown
 wick tree URL                 # semantic tree
@@ -69,8 +73,10 @@ wick session save myjob
 
 # Act (Chromium — heavy contact)
 wick act goto URL
+wick act click 'role=link[name="More information"]'   # role= hints from snap/plan/ask
 wick act click "css=button.submit"
 wick act fill "css=input[name=q]" "hello"
+wick act wait_url "fragment" 15000                    # wait for navigation
 wick tabs new --url URL
 wick tabs list
 wick pdf --url URL -o out.pdf
@@ -127,8 +133,9 @@ wick-browser/
 - [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md) — observe / act / session / playbook architecture  
 - [ABOUT.md](ABOUT.md) — product story & non-goals  
 - [docs/SECURITY.md](docs/SECURITY.md) — CDP, shields honesty, proxy, `WICK_HOME`  
-- [docs/HEADLESS.md](HEADLESS.md) — how headless works here  
+- [docs/HEADLESS.md](docs/HEADLESS.md) — how headless works here  
 - [docs/SHIELDS-AND-ACTIONS.md](docs/SHIELDS-AND-ACTIONS.md) — privacy + act surface  
+- [docs/WICK-0.6.md](docs/WICK-0.6.md) — 0.6.1 release notes  
 - [docs/WICK-0.5.md](docs/WICK-0.5.md) — full command map  
 
 ## License

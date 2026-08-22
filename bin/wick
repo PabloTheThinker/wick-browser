@@ -41,7 +41,7 @@ try:
 except Exception:
     wick_elements = None
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
 
 def _hist(kind: str, **kw) -> None:
@@ -396,6 +396,10 @@ def lp_fetch(
     urls = [url] if isinstance(url, str) else list(url)
     if not urls:
         return {"ok": False, "product": "wick", "error": "no_url"}
+    cleaned_urls = [str(u).strip() for u in urls if u is not None]
+    if not cleaned_urls or any(not u for u in cleaned_urls):
+        return {"ok": False, "product": "wick", "error": "no_url"}
+    urls = cleaned_urls
 
     ensure()
     cmd: list[str] = [str(lp_bin), "fetch", *urls, "--json"]
@@ -1363,23 +1367,31 @@ def cmd_tabs(args: argparse.Namespace) -> int:
 
 
 
-def cmd_snap(args: argparse.Namespace) -> int:
-    """One-shot agent snapshot: status, title, markdown, links, interactive elements.
-
-    Built for agent loops — one tool call, maximum situation awareness.
-    """
-    wait = 1200 if getattr(args, "fast", False) else getattr(args, "wait_ms", 2000)
+def _gather_snap(
+    url: str,
+    *,
+    max_chars: int = 12000,
+    excerpt_len: int = 600,
+    elements_limit: int = 40,
+    link_limit: int = 25,
+    tree_max: int = 60000,
+    wait_until: str = "load",
+    wait_ms: int = 2000,
+    fast: bool = False,
+    no_strip: bool = False,
+) -> dict:
+    """Shared snap gather for snap/plan/ask (no print)."""
+    wait = 1200 if fast else wait_ms
     md = lp_fetch(
-        args.url,
+        url,
         dump="markdown",
-        max_chars=args.max,
-        wait_until="domcontentloaded" if args.fast else (args.wait_until or "load"),
+        max_chars=max_chars,
+        wait_until="domcontentloaded" if fast else (wait_until or "load"),
         wait_ms=wait,
-        strip=[] if args.no_strip else ["ui", "invisible"],
+        strip=[] if no_strip else ["ui", "invisible"],
     )
     if not md.get("ok"):
-        print(json.dumps(md, ensure_ascii=False))
-        return 1
+        return md
     text = md.get("content") or ""
     links = extract_md_links(text)
     title = None
@@ -1389,10 +1401,10 @@ def cmd_snap(args: argparse.Namespace) -> int:
             title = s[2:].strip()
             break
     tree_r = lp_fetch(
-        args.url,
+        url,
         dump="semantic_tree_text",
-        max_chars=args.tree_max,
-        wait_until="domcontentloaded" if args.fast else (args.wait_until or "load"),
+        max_chars=tree_max,
+        wait_until="domcontentloaded" if fast else (wait_until or "load"),
         wait_ms=wait,
         strip=["ui", "invisible"],
     )
@@ -1400,32 +1412,162 @@ def cmd_snap(args: argparse.Namespace) -> int:
     if tree_r.get("ok") and wick_elements is not None:
         elements = wick_elements.interactive_only(
             wick_elements.parse_tree_text(tree_r.get("content") or ""),
-            limit=args.elements,
+            limit=elements_limit,
         )
-    out = {
+    return {
         "ok": True,
         "product": "wick",
         "version": VERSION,
-        "mode": "agent_snap",
-        "url": md.get("url") or args.url,
+        "url": md.get("url") or url,
         "http_status": md.get("http_status"),
         "http_ok": md.get("http_ok"),
         "title": title,
         "ms": (md.get("ms") or 0) + (tree_r.get("ms") or 0),
         "chars": md.get("chars"),
-        "excerpt": re.sub(r"\s+", " ", text).strip()[: args.excerpt],
-        "markdown": text if args.full else None,
+        "excerpt": re.sub(r"\s+", " ", text).strip()[:excerpt_len],
+        "markdown": text,
         "link_count": len(links),
-        "links": links[: args.link_limit],
+        "links": links[:link_limit],
+        "links_all": links,
         "elements": elements,
         "element_count": len(elements),
         "tree_chars": tree_r.get("chars"),
-        "fast": bool(args.fast),
+        "fast": bool(fast),
+    }
+
+
+def cmd_snap(args: argparse.Namespace) -> int:
+    """One-shot agent snapshot: status, title, markdown, links, interactive elements."""
+    snap = _gather_snap(
+        args.url,
+        max_chars=args.max,
+        excerpt_len=args.excerpt,
+        elements_limit=args.elements,
+        link_limit=args.link_limit,
+        tree_max=args.tree_max,
+        wait_until=args.wait_until or "load",
+        wait_ms=args.wait_ms,
+        fast=bool(args.fast),
+        no_strip=bool(args.no_strip),
+    )
+    if not snap.get("ok"):
+        print(json.dumps(snap, ensure_ascii=False))
+        return 1
+    out = {
+        **snap,
+        "mode": "agent_snap",
         "hint": "Use elements[].hint with wick act click/fill on Chromium path; or wick open for full markdown.",
     }
     if not args.full:
         out.pop("markdown", None)
+    out.pop("links_all", None)
     _hist("snap", url=out["url"], http_ok=out.get("http_ok"), ms=out.get("ms"), elements=out.get("element_count"))
+    print(json.dumps(out, ensure_ascii=False))
+    if args.fail_http and not out.get("http_ok"):
+        return 2
+    return 0
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    """Goal-agnostic action suggestions from snap (open, click hints, screenshot, …)."""
+    snap = _gather_snap(
+        args.url,
+        max_chars=args.max,
+        excerpt_len=args.excerpt,
+        elements_limit=args.elements,
+        link_limit=args.link_limit,
+        tree_max=args.tree_max,
+        wait_until=args.wait_until or "load",
+        wait_ms=args.wait_ms,
+        fast=bool(args.fast),
+        no_strip=bool(args.no_strip),
+    )
+    if not snap.get("ok"):
+        print(json.dumps(snap, ensure_ascii=False))
+        return 1
+    suggestions = []
+    if wick_elements is not None:
+        suggestions = wick_elements.plan_suggestions(
+            url=snap.get("url") or args.url,
+            title=snap.get("title"),
+            excerpt=snap.get("excerpt") or "",
+            links=snap.get("links_all") or snap.get("links") or [],
+            elements=snap.get("elements") or [],
+            click_limit=args.click_limit,
+        )
+    out = {
+        "ok": True,
+        "product": "wick",
+        "version": VERSION,
+        "mode": "agent_plan",
+        "url": snap.get("url") or args.url,
+        "http_ok": snap.get("http_ok"),
+        "title": snap.get("title"),
+        "excerpt": snap.get("excerpt"),
+        "element_count": snap.get("element_count"),
+        "link_count": snap.get("link_count"),
+        "ms": snap.get("ms"),
+        "suggestions": suggestions,
+        "hint": "Suggestions are goal-agnostic; pick actions matching your task.",
+    }
+    _hist("plan", url=out["url"], http_ok=out.get("http_ok"), ms=out.get("ms"), suggestions=len(suggestions))
+    print(json.dumps(out, ensure_ascii=False))
+    if args.fail_http and not out.get("http_ok"):
+        return 2
+    return 0
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    """Lightweight snap + fuzzy filter of links/elements/excerpt by query words."""
+    if not args.q:
+        print(json.dumps({"ok": False, "product": "wick", "error": "missing_query", "hint": "wick ask URL --q \"search terms\""}))
+        return 2
+    snap = _gather_snap(
+        args.url,
+        max_chars=args.max,
+        excerpt_len=args.excerpt,
+        elements_limit=args.elements,
+        link_limit=0,
+        tree_max=args.tree_max,
+        wait_until=args.wait_until or "load",
+        wait_ms=args.wait_ms,
+        fast=bool(args.fast),
+        no_strip=bool(args.no_strip),
+    )
+    if not snap.get("ok"):
+        print(json.dumps(snap, ensure_ascii=False))
+        return 1
+    if wick_elements is None:
+        print(json.dumps({"ok": False, "error": "elements_module_missing"}))
+        return 1
+    links_all = snap.get("links_all") or []
+    elements_all = snap.get("elements") or []
+    excerpt = snap.get("excerpt") or ""
+    words = wick_elements.query_words(args.q)
+    matched_links = wick_elements.filter_links(links_all, args.q)[: args.link_limit]
+    matched_elements = wick_elements.filter_elements(elements_all, args.q)[: args.elements]
+    excerpt_score = wick_elements.fuzzy_score(excerpt, words)
+    out = {
+        "ok": True,
+        "product": "wick",
+        "version": VERSION,
+        "mode": "agent_ask",
+        "url": snap.get("url") or args.url,
+        "http_ok": snap.get("http_ok"),
+        "title": snap.get("title"),
+        "query": args.q,
+        "query_words": words,
+        "ms": snap.get("ms"),
+        "excerpt_match": excerpt_score > 0,
+        "excerpt_score": excerpt_score,
+        "excerpt": excerpt if excerpt_score > 0 else None,
+        "links": matched_links,
+        "link_count": len(matched_links),
+        "elements": matched_elements,
+        "element_count": len(matched_elements),
+        "hint": "Matches are substring word hits on name/href/excerpt — no LLM.",
+    }
+    _hist("ask", url=out["url"], query=args.q, links=out["link_count"], elements=out["element_count"])
     print(json.dumps(out, ensure_ascii=False))
     if args.fail_http and not out.get("http_ok"):
         return 2
@@ -1627,7 +1769,7 @@ def main() -> int:
     p.add_argument("--dump", default="markdown")
     p.add_argument("--max", type=int, default=8000)
     p.add_argument("--wait-until", default="load")
-    p.add_argument("--wait-ms", type=int, default=2000)
+    p.add_argument("--wait-ms", type=int, default=1500)
     _add_json_only(p)
 
 
@@ -1669,7 +1811,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("act", help="Chromium interactive action (goto/click/fill/press/wait/eval/content)")
-    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies"])
+    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "wait_url", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies"])
     p.add_argument("rest", nargs="*", help="action args (selector, text, url, ...)")
     _add_json_only(p)
 
@@ -1702,6 +1844,36 @@ def main() -> int:
     p.add_argument("--all", action="store_true", help="include non-interactive nodes")
     p.add_argument("--wait-until", default="load")
     p.add_argument("--wait-ms", type=int, default=2000)
+    _add_json_only(p)
+
+    p = sub.add_parser("plan", help="Goal-agnostic action suggestions from snap")
+    p.add_argument("url")
+    p.add_argument("--max", type=int, default=12000)
+    p.add_argument("--excerpt", type=int, default=600)
+    p.add_argument("--elements", type=int, default=40)
+    p.add_argument("--link-limit", type=int, default=25)
+    p.add_argument("--click-limit", type=int, default=3, help="max click suggestions from element hints")
+    p.add_argument("--tree-max", type=int, default=60000)
+    p.add_argument("--wait-until", default="load")
+    p.add_argument("--wait-ms", type=int, default=2000)
+    p.add_argument("--fast", action="store_true", help="domcontentloaded + 1200ms wait")
+    p.add_argument("--no-strip", action="store_true")
+    p.add_argument("--fail-http", action="store_true")
+    _add_json_only(p)
+
+    p = sub.add_parser("ask", help="Snap + fuzzy filter links/elements by query (no LLM)")
+    p.add_argument("url")
+    p.add_argument("--q", required=True, help="search terms (word substring match)")
+    p.add_argument("--max", type=int, default=12000)
+    p.add_argument("--excerpt", type=int, default=600)
+    p.add_argument("--elements", type=int, default=20)
+    p.add_argument("--link-limit", type=int, default=15)
+    p.add_argument("--tree-max", type=int, default=60000)
+    p.add_argument("--wait-until", default="load")
+    p.add_argument("--wait-ms", type=int, default=2000)
+    p.add_argument("--fast", action="store_true")
+    p.add_argument("--no-strip", action="store_true")
+    p.add_argument("--fail-http", action="store_true")
     _add_json_only(p)
 
     p = sub.add_parser("probe", help="Compact agent brief: status, title, links, excerpt")
@@ -1768,6 +1940,8 @@ def main() -> int:
         "probe": cmd_probe,
         "snap": cmd_snap,
         "elements": cmd_elements,
+        "plan": cmd_plan,
+        "ask": cmd_ask,
         "xexam": cmd_xexam,
         "goto": cmd_goto,
         "shot": cmd_shot,

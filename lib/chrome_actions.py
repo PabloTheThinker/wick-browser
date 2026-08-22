@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +15,9 @@ except Exception:
     CHROME_HARDENING_ARGS = []
 
 PORT = int(os.environ.get("WICK_CHROME_PORT", "9222"))
+ROLE_SEL_RE = re.compile(
+    r'^role=([a-zA-Z][\w-]*)(?:\[name=(?:"([^"]*)"|\'([^\']*)\')\])?$'
+)
 
 
 def connect():
@@ -34,6 +38,18 @@ def pages_info(ctx):
         except Exception:
             out.append({"index": i, "url": "?", "title": "?"})
     return out
+
+
+def resolve_locator(page, sel: str):
+    """Translate role=link[name=\"...\"] hints to Playwright get_by_role."""
+    m = ROLE_SEL_RE.match((sel or "").strip())
+    if m:
+        role, name1, name2 = m.groups()
+        name = name1 if name1 is not None else name2
+        if name:
+            return page.get_by_role(role, name=name)
+        return page.get_by_role(role)
+    return page.locator(sel)
 
 
 def main() -> int:
@@ -60,12 +76,12 @@ def main() -> int:
 
         elif action == "click":
             sel = args[0]
-            page.click(sel, timeout=15000)
+            resolve_locator(page, sel).click(timeout=15000)
             print(json.dumps({"ok": True, "clicked": sel, "url": page.url}))
 
         elif action == "fill":
             sel, text = args[0], args[1]
-            page.fill(sel, text, timeout=15000)
+            resolve_locator(page, sel).fill(text, timeout=15000)
             print(json.dumps({"ok": True, "filled": sel, "n": len(text)}))
 
         elif action == "select":
@@ -84,6 +100,16 @@ def main() -> int:
         elif action == "wait":
             page.wait_for_selector(args[0], timeout=30000)
             print(json.dumps({"ok": True, "waited": args[0]}))
+
+        elif action == "wait_url":
+            fragment = args[0]
+            timeout = int(args[1]) if len(args) > 1 else 30000
+            page.wait_for_function(
+                "(f) => window.location.href.includes(f)",
+                arg=fragment,
+                timeout=timeout,
+            )
+            print(json.dumps({"ok": True, "url": page.url, "matched": fragment}))
 
         elif action == "eval":
             val = page.evaluate(args[0])
@@ -187,7 +213,7 @@ def main() -> int:
             print(json.dumps({"ok": True, "scrolled": direction, "amount": amount, "url": page.url}))
 
         elif action == "hover":
-            page.hover(args[0], timeout=15000)
+            resolve_locator(page, args[0]).hover(timeout=15000)
             print(json.dumps({"ok": True, "hovered": args[0]}))
 
         elif action == "cookies":

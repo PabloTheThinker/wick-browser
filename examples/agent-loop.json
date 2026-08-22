@@ -1,5 +1,8 @@
 [
-  {"action": "snap_note", "note": "Use CLI: wick snap URL --fast then act on elements"},
+  {"action": "snap_note", "note": "Notes ride on soft-ignored actions (JSON has no comments); they never fail the run."},
+  {"action": "snap_note", "note": "Loop before a playbook: wick snap URL --fast -> wick plan URL --fast -> wick ask URL --q 'terms'."},
+  {"action": "snap_note", "note": "plan returns suggestions[] with ready-to-run cmd; ask filters links/elements by query words, no LLM."},
+  {"action": "snap_note", "note": "Feed role= hints from snap/plan/ask into act steps below, e.g. click selector role=link[name=\"More information\"]."},
   {"action": "open", "url": "https://example.com/", "max": 2000},
   {"action": "goto", "url": "https://example.com/"},
   {"action": "scroll", "direction": "down", "amount": 600},
