@@ -1,0 +1,29 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.bin-cache/
+*.log
+.DS_Store
+
+# engine binaries (install via wick install-engine)
+bin/lightpanda
+engines/
+*.so
+*.dylib
+
+# local runtime (never commit user state)
+.wick-data/
+shields-cache/
+
+# editor
+.idea/
+.vscode/
+*.swp
+bin/lightpanda
+.venv/

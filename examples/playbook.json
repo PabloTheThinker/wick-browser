@@ -1,0 +1,8 @@
+[
+  {"action": "open", "url": "https://example.com/", "max": 2000},
+  {"action": "links", "url": "https://example.com/"},
+  {"action": "goto", "url": "https://example.com/"},
+  {"action": "tab_new", "url": "https://example.org/"},
+  {"action": "tab_list"},
+  {"action": "pdf", "out": "/tmp/wick-example.pdf"}
+]
