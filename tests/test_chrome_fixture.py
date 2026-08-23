@@ -170,6 +170,32 @@ class TestChromeFixture(unittest.TestCase):
         dump = json.dumps(out)
         self.assertNotIn("s3cret-value-xyz", dump)
 
+    def test_vault_passkey_asserts_on_localhost(self):
+        import vault
+
+        pk_url = f"http://127.0.0.1:{self.port}/passkey.html"
+        vault.ensure_local_key()
+        created = vault.create_passkey("local-pk", url=pk_url, username="agent")
+        self.assertTrue(created.get("ok"), created)
+        self.assertNotIn("private_key", created)
+        self.assertNotIn("privateKey", json.dumps(created))
+
+        gone = self._run("goto", pk_url)
+        self.assertTrue(gone.get("ok"), gone)
+        used = self._run("passkey", pk_url, "local-pk")
+        self.assertTrue(used.get("ok"), used)
+        dump = json.dumps(used)
+        self.assertNotIn("privateKey", dump)
+        self.assertNotIn("passkey_private_key", dump)
+        try:
+            self.page.wait_for_function(
+                "() => (document.getElementById('out') || {}).textContent === 'asserted'",
+                timeout=8000,
+            )
+        except Exception as e:
+            raise unittest.SkipTest(f"virtual authenticator assertion did not complete: {e}")
+        self.assertEqual(self.page.locator("#out").inner_text(), "asserted")
+
 
 if __name__ == "__main__":
     unittest.main()

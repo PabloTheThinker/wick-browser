@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Wick Passkey Fixture</title>
+</head>
+<body>
+  <h1>Passkey Lab</h1>
+  <p>Client-only WebAuthn create/get. rpId is this hostname.</p>
+  <button id="create" type="button">Create passkey</button>
+  <button id="use" type="button">Use passkey</button>
+  <pre id="out">idle</pre>
+  <script>
+    function b() { return crypto.getRandomValues(new Uint8Array(32)); }
+    function uid() { return crypto.getRandomValues(new Uint8Array(16)); }
+    var out = document.getElementById("out");
+    document.getElementById("create").addEventListener("click", function () {
+      navigator.credentials.create({
+        publicKey: {
+          challenge: b(),
+          rp: { name: "Wick fixture", id: location.hostname },
+          user: { id: uid(), name: "agent", displayName: "agent" },
+          pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+          authenticatorSelection: {
+            residentKey: "required",
+            requireResidentKey: true,
+            userVerification: "required"
+          },
+          timeout: 15000
+        }
+      }).then(function (cred) {
+        out.textContent = cred ? "registered" : "failed";
+      }).catch(function (err) {
+        out.textContent = "create-error " + (err && err.name ? err.name : "unknown");
+      });
+    });
+    document.getElementById("use").addEventListener("click", function () {
+      navigator.credentials.get({
+        publicKey: {
+          challenge: b(),
+          rpId: location.hostname,
+          userVerification: "required",
+          timeout: 15000
+        }
+      }).then(function (cred) {
+        out.textContent = cred ? "asserted" : "failed";
+      }).catch(function (err) {
+        out.textContent = "get-error " + (err && err.name ? err.name : "unknown");
+      });
+    });
+  </script>
+</body>
+</html>

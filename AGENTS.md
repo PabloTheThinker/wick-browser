@@ -161,6 +161,10 @@ Local store is **wickvault2**: AES-256-GCM, HKDF wrap key → vault key → per-
 
 Fill is refused on a mismatched origin (phishing page). HTTPS-saved entries never fill on HTTP. `javascript:` / `data:` / private-network URLs are rejected unless `WICK_ALLOW_PRIVATE=1`.
 
+Passkeys for agents are **vault-backed WebAuthn**, not Touch ID / hardware keys (those cannot be pressed by a model). `wick vault passkey-new NAME --url URL` stores a discoverable P-256 credential; `wick act passkey URL` injects it through Chromium's CDP virtual authenticator. The private key never enters agent JSON. See [docs/PASSKEYS.md](docs/PASSKEYS.md).
+
+Sensitive Chromium actions can require an outer-harness token: `WICK_REQUIRE_APPROVAL=1` then `wick approve login` (or `WICK_APPROVE=login`). A page cannot mint this.
+
 ## Sessions
 
 ```bash
@@ -183,7 +187,7 @@ wick session promote job42    # keep cookies; otherwise sweep/auto-drop deletes 
 | `safe-act` | observe + goto/click/cu/click_xy/type/scroll/tabs | fill, login, eval, get |
 | `full-act` (default) | everything | — |
 
-`WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts.
+`WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts. `WICK_BLOCK_HOSTS` is a denylist with the same syntax; **deny wins**.
 
 ## Shields
 

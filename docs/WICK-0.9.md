@@ -20,6 +20,9 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 - `wick session promote` / `save` keeps cookies; `drop` / `sweep` deletes unpromoted TTL sessions
 - Capability profiles: `WICK_PROFILE=observe-only|safe-act|full-act`
 - Outbound allowlist: `WICK_ALLOW_HOSTS=example.com,.github.com`
+- Outbound denylist: `WICK_BLOCK_HOSTS` (deny wins)
+- Harness approval: `WICK_REQUIRE_APPROVAL=1` + `wick approve login`
+- Vault-backed passkeys: `wick vault passkey-new` + `wick act passkey` (CDP virtual authenticator, not Touch ID)
 - Computer use: `wick act cu` (screenshot + numbered a11y boxes), `click_xy` / `click_n`, `type` / `type_n`, `key`, `move` / `drag`, structured action errors
 - Post-action guards: `wick act click … --expect-url-fragment welcome` / `--expect-element 'role=heading[name="Hi"]'`
 

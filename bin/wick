@@ -76,6 +76,10 @@ try:
     import mcp_stdio as wick_mcp
 except Exception:
     wick_mcp = None  # type: ignore
+try:
+    import approval as wick_approval
+except Exception:
+    wick_approval = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -735,6 +739,7 @@ def cmd_status(_: argparse.Namespace) -> int:
                 },
                 "profile": wick_capability.current_profile() if wick_capability else "full-act",
                 "allow_hosts": wick_capability.parse_allow_hosts() if wick_capability else [],
+                "block_hosts": wick_capability.parse_block_hosts() if wick_capability else [],
             },
             indent=2,
         )
@@ -1288,8 +1293,36 @@ def cmd_vault(args: argparse.Namespace) -> int:
         out = wick_vault.suggest_login(url, elements=elements)
         print(json.dumps(out, ensure_ascii=False))
         return 0 if out.get("ok") else 1
+    if act in ("passkey-new", "passkey_new"):
+        name = getattr(args, "name", "") or ""
+        url = getattr(args, "url", None) or ""
+        if not name or not url:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_name_or_url",
+                        "hint": "wick vault passkey-new NAME --url https://example.com/login",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.create_passkey(name, url=url, username=getattr(args, "username", None))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown_vault_action:{act}"}))
     return 2
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    """Human/harness approval token for login/fill/passkey. A page cannot mint this."""
+    if wick_approval is None:
+        print(json.dumps({"ok": False, "error": "approval_module_missing"}))
+        return 1
+    acts = list(getattr(args, "actions", None) or [])
+    out = wick_approval.issue(acts, ttl=getattr(args, "ttl", None))
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -1337,7 +1370,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if wick_capability is not None and act in (
             "goto", "click", "click_xy", "click_n",
             "dblclick", "doubleclick", "rightclick", "contextclick",
-            "fill", "login", "type", "type_n", "select", "check",
+            "fill", "login", "passkey", "passkey_register", "type", "type_n", "select", "check",
             "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
             "eval", "content", "title", "shot", "back", "forward", "reload",
             "scroll", "scroll_xy", "move", "drag", "hover",
@@ -1378,7 +1411,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         elif act in (
             "goto", "click", "click_xy", "click_n",
             "dblclick", "doubleclick", "rightclick", "contextclick",
-            "fill", "login", "type", "type_n", "select", "check",
+            "fill", "login", "passkey", "passkey_register", "type", "type_n", "select", "check",
             "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
             "eval", "content", "title", "shot", "back", "forward", "reload",
             "scroll", "scroll_xy", "move", "drag", "hover",
@@ -1426,6 +1459,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                         rest.append(step["url"])
                     if step.get("no_submit") or step.get("submit") is False:
                         rest.append("--no-submit")
+                elif act in ("passkey", "passkey_register"):
+                    rest = []
+                    if step.get("url"):
+                        rest.append(step["url"])
+                    if step.get("name"):
+                        rest.append(step["name"])
                 elif act == "check":
                     rest = [step["selector"]]
                 elif act == "back":
@@ -2453,6 +2492,12 @@ def _rpc_handlers() -> dict:
           if not url:
               return {"ok": False, "error": "missing_url"}
           return wick_vault.grant(url, ttl=int(args.get("ttl") or 120))
+      if act in ("passkey-new", "passkey_new"):
+          name = args.get("name") or ""
+          url = args.get("url") or ""
+          if not name or not url:
+              return {"ok": False, "error": "missing_name_or_url"}
+          return wick_vault.create_passkey(name, url=url, username=args.get("username"))
       return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
 
   def _session(args: dict) -> dict:
@@ -2799,6 +2844,7 @@ def main() -> int:
         choices=[
             "status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen",
             "resolve", "suggest", "autofill", "lock", "unlock", "grant",
+            "passkey-new", "passkey_new",
         ],
     )
     p.add_argument("name", nargs="?", help="entry name (set/get/rm) or ignored")
@@ -2816,11 +2862,16 @@ def main() -> int:
     p.add_argument("--allow-subdomains", action="store_true", help="with set: allow app.example.com to use an example.com entry")
     _add_json_only(p)
 
-    p = sub.add_parser("act", help="Chromium action (goto/click/cu/click_xy/type/login/…)")
+    p = sub.add_parser("approve", help="Human/harness token for login/fill/passkey (not mintable from a page)")
+    p.add_argument("actions", nargs="+", help="login, fill, passkey, passkey_register, eval, download")
+    p.add_argument("--ttl", type=int, default=300, help="seconds the file token lasts (default 300)")
+    _add_json_only(p)
+
+    p = sub.add_parser("act", help="Chromium action (goto/click/cu/click_xy/type/login/passkey/…)")
     p.add_argument("action", choices=[
         "goto", "click", "click_xy", "click_n",
         "dblclick", "doubleclick", "rightclick", "contextclick",
-        "fill", "login", "type", "type_n", "select", "check",
+        "fill", "login", "passkey", "passkey_register", "type", "type_n", "select", "check",
         "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
         "eval", "content", "title", "back", "forward", "reload",
         "scroll", "scroll_xy", "move", "drag", "hover",
@@ -3015,6 +3066,7 @@ def main() -> int:
         "tabs": cmd_tabs,
         "session": cmd_session,
         "vault": cmd_vault,
+        "approve": cmd_approve,
         "act": cmd_act,
         "run": cmd_run,
         "probe": cmd_probe,

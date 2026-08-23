@@ -61,6 +61,7 @@ def _sibling_module(name: str) -> Any:
 wick_origins = _sibling_module("origins")
 wick_login_form = _sibling_module("login_form")
 vcrypto = _sibling_module("vault_crypto")
+wick_passkey = _sibling_module("passkey")
 
 VAULT_FORMAT = "wickvault2"
 LEGACY_VAULT_FORMAT = "wickvault1"
@@ -928,6 +929,38 @@ def status() -> dict[str, Any]:
     return st
 
 
+def _passkey_field_names() -> frozenset[str]:
+    if wick_passkey is not None:
+        return frozenset(getattr(wick_passkey, "PASSKEY_FIELD_NAMES", ()) or ())
+    return frozenset(
+        {
+            "passkey_rpid",
+            "passkey_id",
+            "passkey_user_handle",
+            "passkey_private_key",
+            "passkey_public_key",
+            "passkey_sign_count",
+            "passkey_user",
+        }
+    )
+
+
+def _entry_has_passkey(ent: dict[str, Any] | None) -> bool:
+    if not isinstance(ent, dict):
+        return False
+    if wick_passkey is not None:
+        return wick_passkey.from_entry(ent) is not None
+    return bool(ent.get("passkey_private_key") and ent.get("passkey_rpid"))
+
+
+def _visible_field_names(ent: dict[str, Any]) -> list[str]:
+    hide = _passkey_field_names() | {"url", "notes", "tags", "updated"}
+    names = [k for k in ent if k not in hide]
+    if _entry_has_passkey(ent):
+        names.append("has_passkey")
+    return sorted(set(names))
+
+
 def list_entries(*, backend: str = "local") -> dict[str, Any]:
     if backend != "local":
         return {
@@ -944,14 +977,14 @@ def list_entries(*, backend: str = "local") -> dict[str, Any]:
     for name, ent in sorted(store.items()):
         if not isinstance(ent, dict):
             continue
-        fields = sorted(k for k in ent.keys() if k not in ("url", "notes", "tags", "updated"))
         items.append(
             {
                 "name": name,
-                "fields": fields,
+                "fields": _visible_field_names(ent),
                 "url": ent.get("url") or None,
                 "tags": ent.get("tags") or [],
                 "updated": ent.get("updated"),
+                "has_passkey": _entry_has_passkey(ent),
                 "ref": f"vault://{name}/password" if "password" in ent else f"vault://{name}",
             }
         )
@@ -1032,7 +1065,8 @@ def set_entry(
             if k in ("name",):
                 continue
             ent[str(k)] = str(v)
-    if "password" not in ent and not any(k not in ("url", "notes", "tags", "updated", "username") for k in ent):
+    meta_keys = {"url", "notes", "tags", "updated", "username", "allow_subdomains"}
+    if "password" not in ent and not any(k not in meta_keys for k in ent):
         return {"ok": False, "error": "nothing_to_store"}
     ent["updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     store[name] = ent
@@ -1041,7 +1075,8 @@ def set_entry(
     return {
         "ok": True,
         "name": name,
-        "fields": sorted(k for k in ent if k not in ("notes",)),
+        "fields": _visible_field_names(ent),
+        "has_passkey": _entry_has_passkey(ent),
         "ref": f"vault://{name}/password" if "password" in ent else f"vault://{name}",
         "revealed": False,
     }
@@ -1115,9 +1150,11 @@ def match_url(url: str) -> dict[str, Any]:
                 "has_username": bool(ent.get("username")),
                 "has_password": bool(ent.get("password")),
                 "has_otp": _entry_has_totp(ent),
+                "has_passkey": _entry_has_passkey(ent),
                 "username_ref": f"vault://{name}/username" if ent.get("username") else None,
                 "password_ref": f"vault://{name}/password" if ent.get("password") else None,
                 "otp_ref": f"vault://{name}/otp" if _entry_has_totp(ent) else None,
+                "passkey_ref": f"vault://{name}/passkey" if _entry_has_passkey(ent) else None,
             }
         )
     hits.sort(key=lambda h: (-int(h.get("score") or 0), h.get("name") or ""))
@@ -1190,6 +1227,8 @@ def _resolve_local(body: str, *, reason: str) -> dict[str, Any]:
             raise ValueError("field_missing")
         val = totp_now(secret)
         field = "otp"
+    elif field == "passkey" or field in _passkey_field_names():
+        raise ValueError("passkey_not_a_ref")
     elif field not in ent:
         raise ValueError("field_missing")
     else:
@@ -1435,12 +1474,14 @@ def suggest_login(
             "username_ref": m.get("username_ref"),
             "password_ref": m.get("password_ref"),
             "otp_ref": m.get("otp_ref"),
+            "passkey_ref": m.get("passkey_ref"),
             "username_hint": user_hint.get("hint"),
             "password_hint": pass_hint.get("hint"),
             "otp_hint": otp_hint.get("hint"),
             "submit_hint": ((form or {}).get("submit") or {}).get("hint"),
             "login_cmd": f"wick act login {url!r}",
-            "cmds": cmds,
+            "passkey_cmd": f"wick act passkey {url!r}" if m.get("has_passkey") else None,
+            "cmds": cmds + ([f"wick act passkey {url!r}"] if m.get("has_passkey") else []),
             "reason": m.get("reason"),
             "score": m.get("score"),
         }
@@ -1456,6 +1497,128 @@ def suggest_login(
         "recipe": recipe,
         "revealed": False,
         "hint": "Secrets stay in the vault. Run recipe.login_cmd or wick act login. Never --reveal.",
+    }
+
+
+def create_passkey(
+    name: str,
+    *,
+    url: str,
+    username: str | None = None,
+) -> dict[str, Any]:
+    """Mint a discoverable P-256 passkey and store it. Never returns key material."""
+    if wick_passkey is None:
+        return {"ok": False, "error": "passkey_module_missing"}
+    if not getattr(wick_passkey, "HAVE_EC", False):
+        return {"ok": False, "error": "aead_unavailable"}
+    name = (name or "").strip().strip("/")
+    if not name:
+        return {"ok": False, "error": "bad_name"}
+    rid = wick_passkey.rp_id_from_url(url)
+    if not rid:
+        return {"ok": False, "error": "missing_rpid"}
+    try:
+        cred = wick_passkey.generate(rid, user_name=username or "agent")
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    out = set_entry(
+        name,
+        username=username,
+        url=url,
+        fields=wick_passkey.vault_fields(cred),
+    )
+    if not out.get("ok"):
+        return out
+    _audit("passkey_create", ref=f"vault://{name}/passkey", ok=True, detail=rid)
+    return {
+        "ok": True,
+        "name": name,
+        "url": url,
+        "rp_id": rid,
+        "has_passkey": True,
+        "revealed": False,
+    }
+
+
+def save_passkey_from_cdp(
+    name: str,
+    url: str,
+    raw: dict[str, Any],
+    *,
+    username: str | None = None,
+) -> dict[str, Any]:
+    """Persist a Chromium getCredentials item. Response is metadata only."""
+    if wick_passkey is None:
+        return {"ok": False, "error": "passkey_module_missing"}
+    rid = wick_passkey.rp_id_from_url(url)
+    cred = wick_passkey.from_cdp(raw, rp_id=rid)
+    if not cred.get("private_key") or not cred.get("rp_id"):
+        return {"ok": False, "error": "incomplete_credential"}
+    out = set_entry(
+        name,
+        username=username or cred.get("user_name"),
+        url=url,
+        fields=wick_passkey.vault_fields(cred),
+    )
+    if not out.get("ok"):
+        return out
+    _audit("passkey_save", ref=f"vault://{name}/passkey", ok=True, detail=cred["rp_id"])
+    return {
+        "ok": True,
+        "name": name,
+        "url": url,
+        "rp_id": cred["rp_id"],
+        "has_passkey": True,
+        "revealed": False,
+    }
+
+
+def export_passkey_for_cdp(name: str, page_url: str) -> dict[str, Any]:
+    """Origin-bound CDP credential. Caller must not print credential to agents."""
+    name = (name or "").strip()
+    if wick_passkey is None:
+        return {"ok": False, "error": "passkey_module_missing"}
+    try:
+        ensure_local_key()
+        store = _read_store()
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    ent = store.get(name)
+    if not isinstance(ent, dict):
+        return {"ok": False, "error": "not_found", "name": name}
+    cred = wick_passkey.from_entry(ent)
+    if cred is None:
+        return {"ok": False, "error": "no_passkey", "name": name}
+    grants = _active_grants()
+    if grants:
+        allowed, why = _grant_allows(page_url)
+        if not allowed:
+            _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail=f"grant:{why}")
+            return {"ok": False, "error": f"grant_required:{why}"}
+        saved_ok, saved_why = _grant_allows(str(ent.get("url") or ""))
+        if not saved_ok:
+            _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail=f"grant:{saved_why}")
+            return {"ok": False, "error": f"grant_required:{saved_why}"}
+    saved = ent.get("url")
+    if saved and wick_origins is not None:
+        origin_ok, origin_reason, _score = wick_origins.origins_compatible(
+            str(saved), page_url, allow_subdomains=bool(ent.get("allow_subdomains"))
+        )
+        if not origin_ok:
+            _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail=origin_reason)
+            return {"ok": False, "error": f"origin_mismatch:{origin_reason}"}
+    elif os.environ.get("WICK_VAULT_REQUIRE_ORIGIN", "1") != "0":
+        _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail="unbound")
+        return {"ok": False, "error": "origin_unbound"}
+    if not wick_passkey.rpid_matches_url(cred["rp_id"], page_url):
+        _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail="rpid_mismatch")
+        return {"ok": False, "error": "rpid_mismatch"}
+    _audit("export_passkey", ref=f"vault://{name}/passkey", ok=True, detail="cdp")
+    return {
+        "ok": True,
+        "name": name,
+        "rp_id": cred["rp_id"],
+        "credential": wick_passkey.to_cdp(cred),
     }
 
 
@@ -1483,8 +1646,9 @@ def get_meta(ref_or_name: str, *, reveal: bool = False) -> dict[str, Any]:
             return {
                 "ok": True,
                 "name": name,
-                "fields": sorted(ent.keys()) if isinstance(ent, dict) else [],
+                "fields": _visible_field_names(ent) if isinstance(ent, dict) else [],
                 "url": ent.get("url") if isinstance(ent, dict) else None,
+                "has_passkey": _entry_has_passkey(ent) if isinstance(ent, dict) else False,
                 "ref": f"vault://{name}/password",
                 "revealed": False,
             }

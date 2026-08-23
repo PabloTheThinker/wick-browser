@@ -11,9 +11,9 @@ Scope constraints for this doc:
 
 ## 0) Status as of 0.9 (this branch)
 
-Shipped since this brief was written: origin-bound vault + `act login`, ephemeral sessions, capability profiles, `WICK_ALLOW_HOSTS`, unified SSRF on both engines, `untrusted_content` on observe, `wick tools` + `wick rpc stdio`, `wick mcp` (Hermes / Claude / Cursor), snapshot profiles (`micro|default|full`), parallel `snap-many`, snap `timing` breakdowns, computer-use (`cu` / `click_n` / `click_xy` / `type`), structured action errors, and `--expect-url-fragment` / `--expect-element`. Chromium fixture tests drive a local page through `cu` → `type_n` → `click_n` → `wait_text`.
+Shipped since this brief was written: origin-bound vault + `act login`, ephemeral sessions, capability profiles, `WICK_ALLOW_HOSTS` + **`WICK_BLOCK_HOSTS` (deny wins)**, unified SSRF on both engines, `untrusted_content` on observe, `wick tools` + `wick rpc stdio`, `wick mcp` (Hermes / Claude / Cursor), snapshot profiles (`micro|default|full`), parallel `snap-many`, snap `timing` breakdowns, computer-use (`cu` / `click_n` / `click_xy` / `type`), structured action errors, `--expect-url-fragment` / `--expect-element`, harness **`wick approve`** for login/fill/passkey, and **vault-backed passkeys** via Chromium's CDP virtual authenticator. Chromium fixture tests drive a local page through `cu` → `type_n` → `click_n` → `wait_text` and a localhost WebAuthn assert.
 
-Still open from the original P0/P1 list: `WICK_BLOCK_HOSTS` / `shields --policy`.
+Still open from the original P0/P1 list: `shields --policy` as a file-shaped overlay on the env lists. Independent crypto audit is **not** claimed.
 
 ## 1) Where Wick Stands Today (0.6.1 Baseline)
 

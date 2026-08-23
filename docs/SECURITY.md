@@ -27,7 +27,11 @@ See [VAULT.md](VAULT.md) and [VAULT-CRYPTO.md](VAULT-CRYPTO.md). Combine with sh
 
 `WICK_PROFILE=observe-only` / `safe-act` / `full-act` is enforced at the CLI and RPC layer. A read-only harness cannot fill passwords or eval JS even if a page (or a confused planner) asks it to.
 
-`WICK_ALLOW_HOSTS` is an optional outbound allowlist for fetch/goto/login.
+`WICK_ALLOW_HOSTS` is an optional outbound allowlist for fetch/goto/login. `WICK_BLOCK_HOSTS` is the matching denylist; **deny wins**.
+
+`WICK_REQUIRE_APPROVAL=1` blocks `login` / `fill` / `passkey` / `eval` / `download` until a human or outer harness runs `wick approve …` or sets `WICK_APPROVE`. A page cannot mint this token.
+
+Passkeys: vault-stored resident keys injected via Chromium's CDP virtual authenticator. Not Touch ID / hardware keys. Private keys never appear in agent JSON. See [PASSKEYS.md](PASSKEYS.md).
 
 ## Fetch / navigation guards (0.9)
 

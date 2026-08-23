@@ -18,10 +18,12 @@ class TestProfiles(unittest.TestCase):
     def setUp(self):
         os.environ.pop("WICK_PROFILE", None)
         os.environ.pop("WICK_ALLOW_HOSTS", None)
+        os.environ.pop("WICK_BLOCK_HOSTS", None)
 
     def tearDown(self):
         os.environ.pop("WICK_PROFILE", None)
         os.environ.pop("WICK_ALLOW_HOSTS", None)
+        os.environ.pop("WICK_BLOCK_HOSTS", None)
 
     def test_default_is_full(self):
         self.assertEqual(capability.current_profile(), "full-act")
@@ -42,6 +44,7 @@ class TestProfiles(unittest.TestCase):
         self.assertIsNone(capability.deny("mcp"))
         self.assertIsNone(capability.deny("snap-many"))
         self.assertIsNone(capability.deny("snap_many"))
+        self.assertIsNone(capability.deny("approve"))
 
     def test_safe_act_allows_click_blocks_fill(self):
         os.environ["WICK_PROFILE"] = "safe-act"
@@ -49,8 +52,10 @@ class TestProfiles(unittest.TestCase):
         self.assertIsNone(capability.deny("act", action="goto"))
         self.assertIsNotNone(capability.deny("act", action="fill"))
         self.assertIsNotNone(capability.deny("act", action="login"))
+        self.assertIsNotNone(capability.deny("act", action="passkey"))
         self.assertIsNotNone(capability.deny("act", action="eval"))
         self.assertIsNotNone(capability.deny("get"))
+        self.assertIsNone(capability.deny("approve"))
 
     def test_alias_observe(self):
         os.environ["WICK_PROFILE"] = "observe"
@@ -60,9 +65,11 @@ class TestProfiles(unittest.TestCase):
 class TestAllowHosts(unittest.TestCase):
     def setUp(self):
         os.environ.pop("WICK_ALLOW_HOSTS", None)
+        os.environ.pop("WICK_BLOCK_HOSTS", None)
 
     def tearDown(self):
         os.environ.pop("WICK_ALLOW_HOSTS", None)
+        os.environ.pop("WICK_BLOCK_HOSTS", None)
 
     def test_unrestricted_by_default(self):
         ok, reason = capability.host_allowed("https://evil.test/")
@@ -75,6 +82,23 @@ class TestAllowHosts(unittest.TestCase):
         self.assertTrue(capability.host_allowed("https://docs.github.com/")[0])
         self.assertFalse(capability.host_allowed("https://evil.test/")[0])
         self.assertFalse(capability.host_allowed("https://notexample.com/")[0])
+
+    def test_block_hosts_wins(self):
+        os.environ["WICK_BLOCK_HOSTS"] = "evil.test,.ads.example.com"
+        self.assertFalse(capability.host_allowed("https://evil.test/")[0])
+        self.assertEqual(capability.host_allowed("https://evil.test/")[1], "blocked")
+        self.assertFalse(capability.host_allowed("https://tracker.ads.example.com/")[0])
+        self.assertTrue(capability.host_allowed("https://example.com/")[0])
+        denied = capability.deny_host("https://evil.test/")
+        self.assertIsNotNone(denied)
+        self.assertIn("evil.test", denied["block_hosts"])
+
+    def test_block_wins_over_allow(self):
+        os.environ["WICK_ALLOW_HOSTS"] = "example.com"
+        os.environ["WICK_BLOCK_HOSTS"] = "example.com"
+        ok, reason = capability.host_allowed("https://example.com/")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "blocked")
 
 
 if __name__ == "__main__":

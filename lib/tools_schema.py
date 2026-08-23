@@ -162,13 +162,13 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_act",
-        "Chromium interactive action. Computer-use: cu (screenshot + numbered boxes), click_xy / click_n, type / type_n, key. For passwords pass secret refs (vault://…, pass://…, env://…). Prefer action=login for origin-bound autofill.",
+        "Chromium interactive action. Computer-use: cu (screenshot + numbered boxes), click_xy / click_n, type / type_n, key. For passwords pass secret refs (vault://…, pass://…, env://…). Prefer action=login or action=passkey (vault-backed WebAuthn via Chromium virtual authenticator — not Touch ID).",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "goto, cu, click, click_xy, click_n, type, type_n, key, fill, login, wait_url, scroll, pdf, …",
+                    "description": "goto, cu, click, click_xy, click_n, type, type_n, key, fill, login, passkey, passkey_register, wait_url, scroll, pdf, …",
                 },
                 "rest": {
                     "type": "array",
@@ -232,12 +232,17 @@ WICK_TOOLS: list[dict[str, Any]] = [
                         "unlock",
                         "lock",
                         "grant",
+                        "passkey-new",
                     ],
-                    "description": "Metadata actions only; never request reveal. unlock/lock/grant need WICK_PROFILE=full-act: grant scopes resolve/fill to one origin, lock drops the session and its grants.",
+                    "description": "Metadata actions only; never request reveal. unlock/lock/grant need WICK_PROFILE=full-act. passkey-new stores an origin-bound WebAuthn credential (no key in JSON).",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Entry name for passkey-new.",
                 },
                 "url": {
                     "type": "string",
-                    "description": "URL for match (find entries by site) or grant (origin to allow).",
+                    "description": "URL for match (find entries by site), grant (origin to allow), or passkey-new.",
                 },
                 "ttl": {
                     "type": "integer",

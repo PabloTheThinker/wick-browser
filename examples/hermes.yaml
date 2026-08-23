@@ -1,5 +1,6 @@
 # Hermes Agent ↔ Wick MCP (copy into ~/.hermes/config.yaml under mcp_servers).
-# Examples stay on example.com. Tighten WICK_ALLOW_HOSTS for real jobs.
+# Examples stay on example.com. Tighten WICK_ALLOW_HOSTS / WICK_BLOCK_HOSTS.
+# Login/passkey need a separate full-act process plus wick approve if required.
 mcp_servers:
   wick:
     command: wick

@@ -43,6 +43,12 @@ wick act login https://github.com/login
 wick act fill 'css=input[name=login]' 'vault://github/username'
 wick act fill 'css=input[name=password]' 'vault://github/password'
 wick act click 'css=button[type=submit]'
+
+# Passkey (password-manager-as-authenticator — not Touch ID)
+wick vault passkey-new github --url https://github.com/login --username me
+wick act passkey https://github.com/login
+# If WICK_REQUIRE_APPROVAL=1, a human/harness must first:
+wick approve login --ttl 120
 ```
 
 ## Origin binding (0.9)
@@ -149,5 +155,6 @@ These three need `WICK_PROFILE=full-act`; `status` / `list` / `match` / `suggest
 - File-key mode keeps a standing 32-byte key in `master.key` — comparable to an unlocked browser profile. Prefer `WICK_VAULT_PASSPHRASE` plus `unlock`/`grant` TTLs on shared machines.
 - Same-user malware can read `WICK_HOME`; `0700` is isolation, not magic.
 - Proton Pass and KeePassXC require their CLIs on `PATH`.
-- Does not replace 2FA / passkeys UX; TOTP can be stored as a field but Wick does not auto-submit WebAuthn.
+- TOTP can be stored as a field (`vault://name/otp`).
+- Passkeys: Wick can *be* the authenticator (Bitwarden / Proton Pass model) via a vault-stored P-256 resident key and Chromium's CDP virtual authenticator. It cannot press Touch ID, Windows Hello, or a hardware key. See [PASSKEYS.md](PASSKEYS.md).
 - Page content remains untrusted (`observe_security` annotations).

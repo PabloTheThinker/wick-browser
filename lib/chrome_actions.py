@@ -44,6 +44,14 @@ try:
     import act_expect as wick_expect
 except Exception:
     wick_expect = None  # type: ignore
+try:
+    import approval as wick_approval
+except Exception:
+    wick_approval = None  # type: ignore
+try:
+    import passkey as wick_passkey
+except Exception:
+    wick_passkey = None  # type: ignore
 
 
 def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
@@ -63,6 +71,95 @@ def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
         if herr:
             return None, herr
     return normalized, None
+
+
+def _wait_login_surface(page, timeout: int = 10000) -> None:
+    try:
+        page.wait_for_selector(
+            'input[type="password"], input[type="email"], input[autocomplete="username"], '
+            "#use, #use-passkey, #create-passkey, [data-wick-passkey]",
+            timeout=timeout,
+        )
+    except Exception:
+        pass
+
+
+def _cdp_session(page):
+    return page.context.new_cdp_session(page)
+
+
+def _install_virtual_authenticator(page) -> tuple[object, str]:
+    session = _cdp_session(page)
+    session.send("WebAuthn.enable")
+    cached = getattr(page.context, "_wick_authenticator_id", None)
+    if cached:
+        return session, str(cached)
+    res = session.send(
+        "WebAuthn.addVirtualAuthenticator",
+        {
+            "options": {
+                "protocol": "ctap2",
+                "transport": "internal",
+                "hasResidentKey": True,
+                "hasUserVerification": True,
+                "isUserVerified": True,
+                "automaticPresenceSimulation": True,
+            }
+        },
+    )
+    aid = str((res or {}).get("authenticatorId") or "")
+    if not aid:
+        raise RuntimeError("virtual_authenticator_failed")
+    page.context._wick_authenticator_id = aid
+    return session, aid
+
+
+def _add_vault_credential(page, cdp_cred: dict) -> None:
+    session, aid = _install_virtual_authenticator(page)
+    session.send(
+        "WebAuthn.addCredential",
+        {"authenticatorId": aid, "credential": cdp_cred},
+    )
+
+
+def _click_passkey_button(page, *, register: bool = False) -> bool:
+    if register:
+        patterns = (
+            r"create (a )?passkey",
+            r"register (a )?passkey",
+            r"set up (a )?passkey",
+            r"add (a )?passkey",
+            r"create",
+        )
+        css = ("#create", "#create-passkey", "#reg", "[data-wick-passkey-register]")
+    else:
+        patterns = (
+            r"use (a |saved )?passkey",
+            r"sign in with (a )?passkey",
+            r"continue with (a )?passkey",
+            r"passkey",
+            r"use security key",
+        )
+        css = ("#use", "#use-passkey", "[data-wick-passkey]")
+    for pat in patterns:
+        try:
+            page.get_by_role("button", name=re.compile(pat, re.I)).first.click(timeout=2500)
+            return True
+        except Exception:
+            continue
+    for sel in css:
+        try:
+            page.locator(sel).first.click(timeout=1500)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _scrub_passkey_export(exported: dict) -> dict:
+    """Drop privateKey before any JSON that might reach an agent."""
+    out = {k: v for k, v in exported.items() if k != "credential"}
+    return out
 
 
 def _fill_secret(page, sel: str, text: str) -> tuple[str, dict | None, dict | None]:
@@ -379,6 +476,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
                 page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
+        _wait_login_surface(page)
         if wick_vault is None:
             return 1, {"ok": False, "error": "vault_module_missing"}
         matched = wick_vault.match_url(page.url)
@@ -391,6 +489,27 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
                 "hint": "Save an entry with --url matching this origin: wick vault set NAME --url URL --username …",
             }
         m = hits[0]
+        if m.get("has_passkey"):
+            exported = wick_vault.export_passkey_for_cdp(m["name"], page.url)
+            if exported.get("ok") and exported.get("credential"):
+                try:
+                    _add_vault_credential(page, exported["credential"])
+                    if _click_passkey_button(page):
+                        return 0, {
+                            "ok": True,
+                            "action": "login",
+                            "via": "passkey",
+                            "url": page.url,
+                            "title": page.title(),
+                            "entry": m.get("name"),
+                            "origin_reason": m.get("reason"),
+                            "filled": [],
+                            "refs": [m.get("passkey_ref") or f"vault://{m.get('name')}/passkey"],
+                            "submitted": True,
+                            "vault": {"revealed": False, "chars": None},
+                        }
+                except Exception:
+                    pass
         filled: list[str] = []
         refs: list[str] = []
         pw_css = wick_login_form.PASSWORD_CSS if wick_login_form else 'input[type="password"]'
@@ -546,7 +665,10 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
         return 0, {"ok": True, "path": str(out), "bytes": out.stat().st_size}
 
     elif action == "download":
-        url = args[0]
+        url, err = _guard_nav_url(args[0])
+        if err:
+            return 1, err
+        url = url or args[0]
         out_dir = Path(args[1] if len(args) > 1 else os.environ.get("WICK_DOWNLOADS") or str(Path.home() / ".wick" / "downloads"))
         out_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -583,12 +705,117 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
     elif action == "cookies":
         return 0, {"ok": True, "cookies": ctx.cookies()}
 
+    elif action == "passkey":
+        rest = list(args)
+        start_url = rest[0] if rest else None
+        name = rest[1] if len(rest) > 1 else None
+        if start_url:
+            start_url, err = _guard_nav_url(start_url)
+            if err:
+                return 1, err
+            page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+        _wait_login_surface(page)
+        if wick_vault is None:
+            return 1, {"ok": False, "error": "vault_module_missing"}
+        if not name:
+            matched = wick_vault.match_url(page.url)
+            hits = [h for h in (matched.get("matches") or []) if h.get("has_passkey")]
+            if not hits:
+                return 1, {
+                    "ok": False,
+                    "error": "no_vault_match",
+                    "url": page.url,
+                    "hint": "wick vault passkey-new NAME --url URL",
+                }
+            name = hits[0]["name"]
+        exported = wick_vault.export_passkey_for_cdp(name, page.url)
+        if not exported.get("ok"):
+            return 1, _scrub_passkey_export(exported)
+        cred = exported.get("credential")
+        if not cred:
+            return 1, {"ok": False, "error": "no_passkey", "name": name}
+        try:
+            _add_vault_credential(page, cred)
+        except Exception as e:
+            return 1, {"ok": False, "error": "virtual_authenticator_failed", "detail": str(e)[:160]}
+        clicked = _click_passkey_button(page)
+        return 0, {
+            "ok": True,
+            "action": "passkey",
+            "url": page.url,
+            "title": page.title(),
+            "entry": name,
+            "clicked": clicked,
+            "used_virtual_authenticator": True,
+            "vault": {"revealed": False, "chars": None},
+        }
+
+    elif action == "passkey_register":
+        rest = list(args)
+        start_url = rest[0] if rest else None
+        name = rest[1] if len(rest) > 1 else None
+        if start_url:
+            start_url, err = _guard_nav_url(start_url)
+            if err:
+                return 1, err
+            page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+        _wait_login_surface(page)
+        if wick_vault is None:
+            return 1, {"ok": False, "error": "vault_module_missing"}
+        try:
+            session, aid = _install_virtual_authenticator(page)
+        except Exception as e:
+            return 1, {"ok": False, "error": "virtual_authenticator_failed", "detail": str(e)[:160]}
+        clicked = _click_passkey_button(page, register=True)
+        creds: list = []
+        try:
+            page.wait_for_timeout(800)
+            raw = session.send("WebAuthn.getCredentials", {"authenticatorId": aid}) or {}
+            creds = list(raw.get("credentials") or [])
+        except Exception:
+            creds = []
+        if not creds:
+            return 1, {
+                "ok": False,
+                "error": "no_credential_created",
+                "clicked": clicked,
+                "hint": "Page must call navigator.credentials.create after the Create click",
+            }
+        raw_cred = creds[-1]
+        if not isinstance(raw_cred, dict):
+            return 1, {"ok": False, "error": "no_credential_created"}
+        if not name:
+            host = ""
+            if wick_passkey is not None:
+                host = wick_passkey.rp_id_from_url(page.url) or ""
+            name = f"passkey-{host or 'site'}"
+        saved = wick_vault.save_passkey_from_cdp(name, page.url, raw_cred)
+        return (0 if saved.get("ok") else 1), {
+            **{k: v for k, v in saved.items() if k != "credential"},
+            "action": "passkey_register",
+            "url": page.url,
+            "clicked": clicked,
+            "revealed": False,
+        }
+
     else:
         return 2, {"ok": False, "error": f"unknown_action {action}"}
 
 
 def run_on_page(page, ctx, action: str, raw_args: list[str] | None = None) -> tuple[int, dict]:
     """Dispatch one Chromium action against an existing page (tests + CLI)."""
+    if wick_approval is not None:
+        denied = wick_approval.check(action)
+        if denied:
+            return 1, denied
     raw = list(raw_args or [])
     if wick_expect is not None:
         args, expect = wick_expect.split_flags(raw)

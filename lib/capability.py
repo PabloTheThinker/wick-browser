@@ -7,7 +7,9 @@ Profiles (WICK_PROFILE):
 
 Host allowlist (WICK_ALLOW_HOSTS): comma-separated hosts. A leading '.'
 means suffix match ('.example.com' allows app.example.com, not evilexample.com).
-Empty / unset = unrestricted.
+Empty / unset = unrestricted (unless blocked).
+
+Host denylist (WICK_BLOCK_HOSTS): same syntax. Deny wins over the allowlist.
 """
 from __future__ import annotations
 
@@ -54,6 +56,7 @@ _OBSERVE_CMDS = frozenset(
         "mcp",
         "snap-many",
         "snap_many",
+        "approve",
         "history",
         "shields",
         "xexam",
@@ -198,33 +201,58 @@ def deny(
     return _deny(c)
 
 
-def parse_allow_hosts() -> list[str]:
-    raw = (os.environ.get("WICK_ALLOW_HOSTS") or "").strip()
+def _parse_host_list(env_name: str) -> list[str]:
+    raw = (os.environ.get(env_name) or "").strip()
     if not raw:
         return []
     return [p.strip().lower() for p in raw.split(",") if p.strip()]
 
 
-def host_allowed(url: str | None) -> tuple[bool, str]:
-    allow = parse_allow_hosts()
-    if not allow:
-        return True, "unrestricted"
+def parse_allow_hosts() -> list[str]:
+    return _parse_host_list("WICK_ALLOW_HOSTS")
+
+
+def parse_block_hosts() -> list[str]:
+    return _parse_host_list("WICK_BLOCK_HOSTS")
+
+
+def _url_host(url: str | None) -> tuple[str, str]:
+    """Return (host, reason_if_empty). host is '' when unusable."""
     s = (url or "").strip()
     if not s:
-        return False, "empty_url"
+        return "", "empty_url"
     if "://" not in s:
         s = "https://" + s.lstrip("/")
     host = (urlsplit(s).hostname or "").lower().rstrip(".")
     if not host:
-        return False, "empty_host"
+        return "", "empty_host"
+    return host, ""
+
+
+def _host_matches(host: str, pat: str) -> bool:
+    p = (pat or "").lstrip("*").lower()
+    if not host or not p:
+        return False
+    if p.startswith("."):
+        base = p[1:]
+        return host == base or host.endswith("." + base)
+    return host == p or host.endswith("." + p)
+
+
+def host_allowed(url: str | None) -> tuple[bool, str]:
+    """Block list wins. Then, if WICK_ALLOW_HOSTS is set, hostname must match."""
+    host, empty_reason = _url_host(url)
+    for pat in parse_block_hosts():
+        if host and _host_matches(host, pat):
+            return False, "blocked"
+    allow = parse_allow_hosts()
+    if not allow:
+        return True, "unrestricted"
+    if empty_reason:
+        return False, empty_reason
     for pat in allow:
-        p = pat.lstrip("*").lower()
-        if p.startswith("."):
-            base = p[1:]
-            if host == base or host.endswith("." + base):
-                return True, "suffix"
-        elif host == p:
-            return True, "exact"
+        if _host_matches(host, pat):
+            return True, "suffix" if pat.lstrip("*").startswith(".") else "exact"
     return False, "host_not_allowed"
 
 
@@ -239,5 +267,6 @@ def deny_host(url: str | None) -> dict[str, Any] | None:
         "url": (url or "")[:160],
         "reason": reason,
         "allow_hosts": parse_allow_hosts(),
-        "hint": "Add the host to WICK_ALLOW_HOSTS or unset the allowlist.",
+        "block_hosts": parse_block_hosts(),
+        "hint": "WICK_BLOCK_HOSTS wins; add the host to WICK_ALLOW_HOSTS or unset the allowlist.",
     }

@@ -130,6 +130,9 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_ALLOW_PRIVATE` | `0` | Allow localhost / RFC1918 fetches |
 | `WICK_PROFILE` | `full-act` | `observe-only` / `safe-act` / `full-act` |
 | `WICK_ALLOW_HOSTS` | — | Comma-separated host allowlist (`.suffix` ok) |
+| `WICK_BLOCK_HOSTS` | — | Comma-separated host denylist (deny wins) |
+| `WICK_REQUIRE_APPROVAL` | — | Require `wick approve` / `WICK_APPROVE` for login/fill/passkey |
+| `WICK_APPROVE` | — | Harness-granted actions (`login`, `passkey`, `*`) |
 | `WICK_SESSION_AUTO_DROP` | `0` | Drop ephemeral session on process exit |
 | `WICK_LP_PORT` | `9333` | Lightpanda CDP |
 | `WICK_CHROME_PORT` | `9222` | Chromium CDP |
@@ -160,6 +163,8 @@ wick-browser/
 - [docs/HEADLESS.md](docs/HEADLESS.md) — how headless works here  
 - [docs/SHIELDS-AND-ACTIONS.md](docs/SHIELDS-AND-ACTIONS.md) — privacy + act surface  
 - [docs/WICK-0.9.md](docs/WICK-0.9.md) — 0.9 agent login + origin-bound vault  
+- [docs/PASSKEYS.md](docs/PASSKEYS.md) — vault-backed WebAuthn for agents  
+- [docs/VAULT.md](docs/VAULT.md) — refs, wickvault2, grant/lock
 - [docs/WICK-0.6.md](docs/WICK-0.6.md) — 0.6.1 release notes  
 - [docs/WICK-0.5.md](docs/WICK-0.5.md) — full command map  
 
