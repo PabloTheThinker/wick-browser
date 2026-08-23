@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-mkdir -p "$HOME/.local/bin" "$HOME/.wick"/{engines,shots,logs,state,shields,sessions,downloads}
+mkdir -p "$HOME/.local/bin" "$HOME/.wick"/{engines,shots,logs,state,shields,sessions,downloads,vault}
+
 
 chmod +x "$ROOT/bin/wick"
 ln -sfn "$ROOT/bin/wick" "$HOME/.local/bin/wick"

@@ -69,4 +69,4 @@ If you're choosing an agent browser in 2026, the question is not "can it drive a
 
 ## Version and license
 
-Public surface tracks **0.7**: the observe loop (`snap`/`plan`/`ask`/`open`/`elements`), the act loop, sessions, shields, playbooks, plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; optional engines (Lightpanda, Chromium via Playwright) keep their own licenses. Contributions welcome.
+Public surface tracks **0.8**: observe + act + sessions + shields + **vault** (open password store + Proton Pass/KeePassXC/AgentMail refs), plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; optional engines (Lightpanda, Chromium via Playwright) keep their own licenses. Contributions welcome.

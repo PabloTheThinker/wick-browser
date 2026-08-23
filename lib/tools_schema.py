@@ -131,7 +131,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_act",
-        "Chromium interactive action (goto, click, fill, wait_url, scroll, pdf, …).",
+        "Chromium interactive action. For passwords pass secret refs as the text arg (vault://…, pass://…, env://…) so values never enter agent context.",
         {
             "type": "object",
             "properties": {
@@ -142,7 +142,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 "rest": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Action arguments (selector, text, url fragment, …).",
+                    "description": "Action arguments. For fill: [selector, text_or_secret_ref].",
                     "default": [],
                 },
             },
@@ -163,6 +163,25 @@ WICK_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Session name (default: default).",
                     "default": "default",
+                },
+            },
+            "required": ["action"],
+        },
+    ),
+    _fn(
+        "wick_vault",
+        "Password vault status/list/match (metadata only). For fill use secret refs: vault://name/password, pass://Vault/Item/password, env://VAR, agentmail://token — never request reveal.",
+        {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["status", "backends", "doctor", "list", "match", "init"],
+                    "description": "Metadata actions only. Secrets are injected via wick_act fill with refs.",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "URL for match (find entries by site).",
                 },
             },
             "required": ["action"],

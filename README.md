@@ -24,16 +24,17 @@ wick act  click 'role=link[name="More information"]'   # act: hints resolve dire
 | Less RAM than always-on Chrome | Lightpanda ~tens of MB; Chromium on demand |
 | Tracker / ad blocking | EasyList + EasyPrivacy + Fanboy + custom URL blocks |
 | Sessions | Isolated cookie jars + Chromium profiles |
+| Credentials | Open vault + Proton Pass / KeePassXC refs (`docs/VAULT.md`) |
 | Automation | `act`, multi-tab, PDF, playbooks (`run`) |
 | Cost | **MIT orchestration · no paid API required** |
 
 ## Honest security scope
 
-Wick aims for **Brave-like network privacy** (list blocking, SSRF guard, privacy headers, session isolation).
+Wick aims for **Brave-like network privacy** (list blocking, SSRF guard, privacy headers, session isolation) plus an **open-source agent password vault** (local store, Proton Pass / KeePassXC / AgentMail refs).
 
-It does **not** claim Brave fingerprint farbling (canvas/WebGL) or Camoufox-class anti-bot. Those need specialized engines. See [docs/SECURITY.md](docs/SECURITY.md) and [docs/SHIELDS-AND-ACTIONS.md](docs/SHIELDS-AND-ACTIONS.md).
+It does **not** claim Brave fingerprint farbling (canvas/WebGL) or Camoufox-class anti-bot. Those need specialized engines. See [docs/SECURITY.md](docs/SECURITY.md), [docs/VAULT.md](docs/VAULT.md), and [docs/SHIELDS-AND-ACTIONS.md](docs/SHIELDS-AND-ACTIONS.md).
 
-CDP stays on **loopback** by default. Proxy credentials are never logged. State under `WICK_HOME` is created mode `0700`.
+CDP stays on **loopback** by default. Proxy credentials and vault secrets are never logged. State under `WICK_HOME` is created mode `0700`.
 
 ## Install
 
@@ -70,6 +71,11 @@ wick shields [--update]
 wick session new myjob
 WICK_SESSION=myjob wick open URL
 wick session save myjob
+
+# Vault (passwords without leaking into agent context)
+wick vault init
+wick vault set mysite --username me --password '…' --url https://example.com/login
+wick act fill 'css=input[type=password]' 'vault://mysite/password'
 
 # Act (Chromium — heavy contact)
 wick act goto URL

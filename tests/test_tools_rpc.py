@@ -40,10 +40,10 @@ observe_security = _load_lib("observe_security")
 
 
 def test_tools_export_shape():
-    out = tools_schema.tools_export("0.7.0")
+    out = tools_schema.tools_export("0.8.0")
     assert out["ok"] is True
     assert out["product"] == "wick"
-    assert out["version"] == "0.7.0"
+    assert out["version"] == "0.8.0"
     assert out["schema"] == "openai_tools_v1"
     tools = out["tools"]
     assert isinstance(tools, list)
@@ -57,6 +57,7 @@ def test_tools_export_shape():
         "wick_act",
         "wick_session",
         "wick_elements",
+        "wick_vault",
     ):
         assert expected in names
     snap = next(t for t in tools if t["function"]["name"] == "wick_snap")
@@ -108,7 +109,7 @@ def test_rpc_version_one_shot():
     out = json.loads(proc.stdout.strip())
     assert out["id"] == "t1"
     assert out["ok"] is True
-    assert out["version"] == "0.7.0"
+    assert out["version"] == "0.8.0"
 
 
 def test_observe_security_annotate():

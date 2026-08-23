@@ -52,8 +52,12 @@ try:
     import rpc_stdio as wick_rpc
 except Exception:
     wick_rpc = None  # type: ignore
+try:
+    import vault as wick_vault
+except Exception:
+    wick_vault = None  # type: ignore
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 
 def _hist(kind: str, **kw) -> None:
@@ -1064,6 +1068,28 @@ def cmd_session(args: argparse.Namespace) -> int:
     return 2
 
 
+def _resolve_act_rest(action: str, rest: list[str]) -> tuple[list[str] | None, dict | None]:
+    """Resolve vault/pass/env refs in fill/select values. Never returns secrets in meta."""
+    if action not in ("fill", "select") or len(rest) < 2:
+        return list(rest), None
+    raw = rest[1]
+    if wick_vault is None or not wick_vault.is_secret_ref(raw):
+        return list(rest), None
+    try:
+        value, meta = wick_vault.resolve_for_fill(raw, reason=f"wick_act_{action}")
+    except ValueError as e:
+        return None, {"ok": False, "error": "vault_resolve_failed", "detail": str(e)[:160], "ref": wick_vault._redact_ref(raw)}
+    out = list(rest)
+    out[1] = value
+    info = {
+        "vault_resolved": True,
+        "ref": meta.get("ref"),
+        "backend": meta.get("backend"),
+        "chars": meta.get("chars"),
+    }
+    return out, info
+
+
 def cmd_act(args: argparse.Namespace) -> int:
     """Browser-Use-shaped Chromium actions (goto/click/fill/press/wait/eval/content)."""
     if not chrome_up():
@@ -1071,10 +1097,113 @@ def cmd_act(args: argparse.Namespace) -> int:
         if not st.get("ok"):
             print(json.dumps(st))
             return 1
+    rest = list(args.rest or [])
+    resolved, vmeta = _resolve_act_rest(args.action, rest)
+    if resolved is None:
+        print(json.dumps(vmeta or {"ok": False, "error": "vault_resolve_failed"}))
+        return 1
     env = os.environ.copy()
     env["WICK_CHROME_PORT"] = str(CHROME_PORT)
-    cmd = [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), args.action, *args.rest]
+    cmd = [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), args.action, *resolved]
+    if vmeta and vmeta.get("vault_resolved"):
+        # Capture JSON so we can attach vault meta without leaking the secret.
+        proc = subprocess.run(cmd, env=env, cwd=str(ROOT), capture_output=True, text=True)
+        try:
+            result = json.loads((proc.stdout or "").strip() or "{}")
+        except Exception:
+            result = {"ok": False, "error": "bad_action_json", "stdout": (proc.stdout or "")[:200]}
+        if proc.returncode != 0 and result.get("ok") is not False:
+            result["ok"] = False
+        result["vault"] = {k: vmeta[k] for k in ("ref", "backend", "chars") if k in vmeta}
+        # Never echo filled plaintext
+        if "filled" in result:
+            result["filled"] = rest[0] if rest else result.get("filled")
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
     return subprocess.call(cmd, env=env, cwd=str(ROOT))
+
+
+def cmd_vault(args: argparse.Namespace) -> int:
+    """Open-source local vault + Proton Pass / KeePassXC / AgentMail refs."""
+    if wick_vault is None:
+        print(json.dumps({"ok": False, "error": "vault_module_missing"}))
+        return 1
+    act = getattr(args, "vault_action", None) or "status"
+    if act in ("status", "backends"):
+        print(json.dumps(wick_vault.status(), ensure_ascii=False))
+        return 0
+    if act == "doctor":
+        print(json.dumps(wick_vault.doctor(), ensure_ascii=False))
+        return 0
+    if act == "init":
+        print(json.dumps(wick_vault.ensure_local_key(rotate=bool(getattr(args, "rotate", False))), ensure_ascii=False))
+        return 0
+    if act == "list":
+        print(json.dumps(wick_vault.list_entries(), ensure_ascii=False))
+        return 0
+    if act == "match":
+        print(json.dumps(wick_vault.match_url(getattr(args, "url", "") or ""), ensure_ascii=False))
+        return 0
+    if act == "set":
+        fields = {}
+        raw_fields = getattr(args, "field", None) or []
+        for item in raw_fields:
+            if "=" in item:
+                k, v = item.split("=", 1)
+                fields[k] = v
+        tags = getattr(args, "tag", None) or []
+        password = getattr(args, "password", None)
+        if password is None:
+            password = os.environ.get("WICK_VAULT_SET_PASSWORD")
+        out = wick_vault.set_entry(
+            getattr(args, "name", "") or "",
+            password=password,
+            username=getattr(args, "username", None),
+            url=getattr(args, "url", None),
+            notes=getattr(args, "notes", None),
+            fields=fields or None,
+            tags=list(tags) if tags else None,
+        )
+        # Scrub env one-shot after use
+        if "WICK_VAULT_SET_PASSWORD" in os.environ:
+            try:
+                del os.environ["WICK_VAULT_SET_PASSWORD"]
+            except Exception:
+                pass
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "rm":
+        out = wick_vault.delete_entry(getattr(args, "name", "") or "")
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "get":
+        out = wick_vault.get_meta(getattr(args, "name", "") or "", reveal=bool(getattr(args, "reveal", False)))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "gen":
+        print(json.dumps(wick_vault.generate_password(int(getattr(args, "length", 24) or 24)), ensure_ascii=False))
+        return 0
+    if act == "resolve":
+        # Agents: prefer fill with refs. resolve --reveal for debug only.
+        ref = getattr(args, "ref", None) or getattr(args, "name", None) or ""
+        if not getattr(args, "reveal", False):
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "ref": wick_vault._redact_ref(ref),
+                        "revealed": False,
+                        "hint": "Use: wick act fill SELECTOR 'vault://name/password' — value never enters agent JSON. Add --reveal only for local debug.",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 0
+        out = wick_vault.resolve(ref, reason="cli_resolve_reveal")
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    print(json.dumps({"ok": False, "error": f"unknown_vault_action:{act}"}))
+    return 2
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -1141,9 +1270,19 @@ def cmd_run(args: argparse.Namespace) -> int:
                 elif act == "click":
                     rest = [step["selector"]]
                 elif act == "fill":
-                    rest = [step["selector"], step.get("text") or step.get("value") or ""]
+                    rest = [step["selector"], step.get("text") or step.get("value") or step.get("secret_ref") or ""]
+                    resolved, vmeta = _resolve_act_rest("fill", rest)
+                    if resolved is None:
+                        results.append({"i": i, "action": act, "result": vmeta})
+                        continue
+                    rest = resolved
                 elif act == "select":
-                    rest = [step["selector"], step.get("value") or ""]
+                    rest = [step["selector"], step.get("value") or step.get("secret_ref") or ""]
+                    resolved, vmeta = _resolve_act_rest("select", rest)
+                    if resolved is None:
+                        results.append({"i": i, "action": act, "result": vmeta})
+                        continue
+                    rest = resolved
                 elif act == "check":
                     rest = [step["selector"]]
                 elif act == "back":
@@ -1883,6 +2022,10 @@ def _rpc_handlers() -> dict:
       if not action:
           return {"ok": False, "error": "missing_action"}
       rest = [str(x) for x in (args.get("rest") or [])]
+      resolved, vmeta = _resolve_act_rest(str(action), rest)
+      if resolved is None:
+          return vmeta or {"ok": False, "error": "vault_resolve_failed"}
+      rest = resolved
       if not chrome_up():
           st = start_chrome(False)
           if not st.get("ok"):
@@ -1902,7 +2045,25 @@ def _rpc_handlers() -> dict:
           result = {"ok": False, "error": "bad_action_json", "stdout": (proc.stdout or "")[:200]}
       if proc.returncode != 0 and result.get("ok") is not False:
           result["ok"] = False
+      if vmeta and vmeta.get("vault_resolved"):
+          result["vault"] = {k: vmeta[k] for k in ("ref", "backend", "chars") if k in vmeta}
       return result
+
+  def _vault(args: dict) -> dict:
+      if wick_vault is None:
+          return {"ok": False, "error": "vault_module_missing"}
+      act = args.get("action") or "status"
+      if act in ("status", "backends"):
+          return wick_vault.status()
+      if act == "doctor":
+          return wick_vault.doctor()
+      if act == "list":
+          return wick_vault.list_entries()
+      if act == "match":
+          return wick_vault.match_url(args.get("url") or "")
+      if act == "init":
+          return wick_vault.ensure_local_key(rotate=bool(args.get("rotate")))
+      return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
 
   def _session(args: dict) -> dict:
       if not wick_shields:
@@ -1949,6 +2110,7 @@ def _rpc_handlers() -> dict:
       "open": _open,
       "elements": _elements,
       "act": _act,
+      "vault": _vault,
       "session": _session,
       "tools": _tools,
       "version": _version,
@@ -2186,9 +2348,32 @@ def main() -> int:
     p.add_argument("name", nargs="?", default="default")
     _add_json_only(p)
 
+    p = sub.add_parser(
+        "vault",
+        help="Open-source password vault + Proton Pass / KeePassXC / AgentMail secret refs",
+    )
+    p.add_argument(
+        "vault_action",
+        nargs="?",
+        default="status",
+        choices=["status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen", "resolve"],
+    )
+    p.add_argument("name", nargs="?", help="entry name (set/get/rm) or ignored")
+    p.add_argument("--password", help="password value for set (prefer env WICK_VAULT_SET_PASSWORD)")
+    p.add_argument("--username")
+    p.add_argument("--url", help="associated URL (set/match)")
+    p.add_argument("--notes")
+    p.add_argument("--field", action="append", default=[], help="extra field KEY=VALUE (repeatable)")
+    p.add_argument("--tag", action="append", default=[], help="tag (repeatable)")
+    p.add_argument("--reveal", action="store_true", help="print secret (local debug only)")
+    p.add_argument("--ref", help="secret ref for resolve (vault://… pass://… env://…)")
+    p.add_argument("--length", type=int, default=24, help="password length for gen")
+    p.add_argument("--rotate", action="store_true", help="with init: rotate master key (destroys old store usability)")
+    _add_json_only(p)
+
     p = sub.add_parser("act", help="Chromium interactive action (goto/click/fill/press/wait/eval/content)")
     p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "wait_url", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies"])
-    p.add_argument("rest", nargs="*", help="action args (selector, text, url, ...)")
+    p.add_argument("rest", nargs="*", help="action args (selector, text|secret-ref, url, ...)")
     _add_json_only(p)
 
     p = sub.add_parser("run", help="Run JSON playbook of open/fetch/click/... steps")
@@ -2333,6 +2518,7 @@ def main() -> int:
         "pdf": cmd_pdf,
         "tabs": cmd_tabs,
         "session": cmd_session,
+        "vault": cmd_vault,
         "act": cmd_act,
         "run": cmd_run,
         "probe": cmd_probe,
