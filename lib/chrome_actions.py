@@ -88,11 +88,26 @@ def _cdp_session(page):
     return page.context.new_cdp_session(page)
 
 
+def _playwright_credentials(page):
+    try:
+        return page.context.credentials
+    except Exception:
+        return None
+
+
 def _install_virtual_authenticator(page) -> tuple[object, str]:
+    api = _playwright_credentials(page)
+    if api is not None:
+        try:
+            api.install()
+        except Exception:
+            pass
+        page.context._wick_authenticator_id = "playwright"
+        return api, "playwright"
     session = _cdp_session(page)
     session.send("WebAuthn.enable")
     cached = getattr(page.context, "_wick_authenticator_id", None)
-    if cached:
+    if cached and cached != "playwright":
         return session, str(cached)
     res = session.send(
         "WebAuthn.addVirtualAuthenticator",
@@ -115,10 +130,38 @@ def _install_virtual_authenticator(page) -> tuple[object, str]:
 
 
 def _add_vault_credential(page, cdp_cred: dict) -> None:
+    api = _playwright_credentials(page)
+    pub = str(cdp_cred.get("publicKey") or "")
+    if api is not None and pub and wick_passkey is not None:
+        pw = wick_passkey.to_playwright(
+            {
+                "rp_id": cdp_cred.get("rpId"),
+                "credential_id": cdp_cred.get("credentialId"),
+                "user_handle": cdp_cred.get("userHandle"),
+                "private_key": cdp_cred.get("privateKey"),
+                "public_key": pub,
+            }
+        )
+        try:
+            api.install()
+        except Exception:
+            pass
+        if pw["id"] and pw["private_key"] and pw["public_key"]:
+            api.create(
+                pw["rp_id"],
+                id=pw["id"],
+                user_handle=pw["user_handle"],
+                private_key=pw["private_key"],
+                public_key=pw["public_key"],
+            )
+            return
     session, aid = _install_virtual_authenticator(page)
+    if aid == "playwright":
+        raise RuntimeError("virtual_authenticator_failed")
+    payload = {k: v for k, v in cdp_cred.items() if k != "publicKey"}
     session.send(
         "WebAuthn.addCredential",
-        {"authenticatorId": aid, "credential": cdp_cred},
+        {"authenticatorId": aid, "credential": payload},
     )
 
 
@@ -154,6 +197,18 @@ def _click_passkey_button(page, *, register: bool = False) -> bool:
         except Exception:
             continue
     return False
+
+
+def _cred_obj_to_dict(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    return {
+        "id": getattr(raw, "id", None),
+        "rpId": getattr(raw, "rp_id", None) or getattr(raw, "rpId", None),
+        "userHandle": getattr(raw, "user_handle", None) or getattr(raw, "userHandle", None),
+        "privateKey": getattr(raw, "private_key", None) or getattr(raw, "privateKey", None),
+        "publicKey": getattr(raw, "public_key", None) or getattr(raw, "publicKey", None),
+    }
 
 
 def _scrub_passkey_export(exported: dict) -> dict:
@@ -778,8 +833,12 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
         creds: list = []
         try:
             page.wait_for_timeout(800)
-            raw = session.send("WebAuthn.getCredentials", {"authenticatorId": aid}) or {}
-            creds = list(raw.get("credentials") or [])
+            if aid == "playwright":
+                got = session.get()
+                creds = [_cred_obj_to_dict(c) for c in (got or [])]
+            else:
+                raw = session.send("WebAuthn.getCredentials", {"authenticatorId": aid}) or {}
+                creds = list(raw.get("credentials") or [])
         except Exception:
             creds = []
         if not creds:

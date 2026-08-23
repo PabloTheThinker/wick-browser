@@ -43,8 +43,16 @@ def test_generate_credential_shape_and_cdp():
     assert cdp["rpId"] == "example.com"
     assert cdp["isResidentCredential"] is True
     assert cdp["privateKey"]
-    # CDP payload is for Chromium, not agent JSON — still no PEM armor
+    # CDP Binary fields are standard base64 (not PEM)
     assert "BEGIN" not in cdp["privateKey"]
+    import base64
+
+    raw = base64.b64decode(cdp["privateKey"])
+    assert raw[:2] == b"\x30\x82" or raw[:1] == b"\x30"
+    pw = passkey.to_playwright(cred)
+    assert pw["rp_id"] == "example.com"
+    assert pw["private_key"]
+    assert "+" not in pw["private_key"] and "/" not in pw["private_key"]
 
 
 def test_vault_passkey_never_lists_key(tmp_path, monkeypatch):

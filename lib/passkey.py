@@ -43,6 +43,20 @@ def _b64d(text: str) -> bytes:
     return base64.urlsafe_b64decode(s + pad)
 
 
+def _b64url(text: str) -> str:
+    """Normalize any base64 flavor to unpadded base64url (Playwright credentials)."""
+    if not text:
+        return ""
+    return _b64e(_b64d(text))
+
+
+def _b64std(text: str) -> str:
+    """Normalize any base64 flavor to padded standard base64 (CDP Binary fields)."""
+    if not text:
+        return ""
+    return base64.b64encode(_b64d(text)).decode("ascii")
+
+
 def rp_id_from_url(url: str | None) -> str | None:
     s = (url or "").strip()
     if not s:
@@ -105,14 +119,31 @@ def generate(rp_id: str, *, user_name: str = "agent", user_handle: bytes | None 
 
 
 def to_cdp(cred: dict[str, Any]) -> dict[str, Any]:
-    """Shape for WebAuthn.addCredential. Contains the private key — Chromium only."""
+    """Shape for WebAuthn.addCredential. Contains the private key — Chromium only.
+
+    CDP Binary fields (credentialId, privateKey, userHandle) must be standard
+    base64. publicKey is for Playwright's credentials.create import path and
+    must be stripped before the CDP send.
+    """
     return {
-        "credentialId": str(cred.get("credential_id") or ""),
+        "credentialId": _b64std(str(cred.get("credential_id") or "")),
         "isResidentCredential": True,
         "rpId": str(cred.get("rp_id") or ""),
-        "privateKey": str(cred.get("private_key") or ""),
-        "userHandle": str(cred.get("user_handle") or ""),
+        "privateKey": _b64std(str(cred.get("private_key") or "")),
+        "userHandle": _b64std(str(cred.get("user_handle") or "")),
         "signCount": int(cred.get("sign_count") or 1),
+        "publicKey": _b64std(str(cred.get("public_key") or "")),
+    }
+
+
+def to_playwright(cred: dict[str, Any]) -> dict[str, str]:
+    """Import shape for Playwright context.credentials.create (base64url)."""
+    return {
+        "rp_id": str(cred.get("rp_id") or ""),
+        "id": _b64url(str(cred.get("credential_id") or "")),
+        "user_handle": _b64url(str(cred.get("user_handle") or "")),
+        "private_key": _b64url(str(cred.get("private_key") or "")),
+        "public_key": _b64url(str(cred.get("public_key") or "")),
     }
 
 
@@ -121,12 +152,12 @@ def from_cdp(raw: dict[str, Any], *, rp_id: str | None = None) -> dict[str, str]
     rid = rp_id or str(raw.get("rpId") or "")
     return {
         "rp_id": rid,
-        "credential_id": str(raw.get("credentialId") or ""),
-        "user_handle": str(raw.get("userHandle") or ""),
-        "private_key": str(raw.get("privateKey") or ""),
-        "public_key": str(raw.get("publicKey") or ""),
-        "sign_count": str(int(raw.get("signCount") or 1)),
-        "user_name": str(raw.get("userName") or "agent")[:120],
+        "credential_id": _b64url(str(raw.get("credentialId") or raw.get("id") or "")),
+        "user_handle": _b64url(str(raw.get("userHandle") or "")),
+        "private_key": _b64url(str(raw.get("privateKey") or raw.get("private_key") or "")),
+        "public_key": _b64url(str(raw.get("publicKey") or raw.get("public_key") or "")),
+        "sign_count": str(int(raw.get("signCount") or raw.get("sign_count") or 1)),
+        "user_name": str(raw.get("userName") or raw.get("user_name") or "agent")[:120],
     }
 
 
