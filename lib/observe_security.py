@@ -72,6 +72,30 @@ def annotate_observe(
         if marked:
             out["markdown"] = cleaned
             sec["script_noise_marked"] = True
+    try:
+        import challenge as wick_challenge
+
+        hit = wick_challenge.detect(
+            url=str(out.get("url") or ""),
+            title=str(out.get("title") or ""),
+            excerpt=str(out.get("excerpt") or ""),
+            html=str(out.get("content") or out.get("markdown") or ""),
+            elements=list(out.get("elements") or []),
+        )
+        if hit.get("found"):
+            sec["human_challenge"] = {
+                "kind": hit.get("kind"),
+                "halt": hit.get("halt"),
+                "solves": False,
+            }
+    except Exception:
+        pass
     out["security"] = sec
+    try:
+        import privacy as wick_privacy
+
+        wick_privacy.annotate(out)
+    except Exception:
+        pass
     out["strip"] = strips
     return out

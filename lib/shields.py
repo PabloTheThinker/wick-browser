@@ -297,6 +297,7 @@ CHROME_HARDENING_ARGS = [
     # privacy-ish
     "--disable-breakpad",
     "--no-pings",
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 ]
 
 

@@ -173,20 +173,35 @@ def vault_fields(cred: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def from_entry(ent: dict[str, Any] | None) -> dict[str, str] | None:
+def from_entry(ent: dict[str, Any] | None, *, name: str = "") -> dict[str, str] | None:
     if not isinstance(ent, dict):
         return None
-    if not ent.get("passkey_private_key") or not ent.get("passkey_rpid"):
+    rp_id = str(ent.get("passkey_rpid") or "")
+    raw_priv = str(ent.get("passkey_private_key") or "")
+    sealed = ent.get("passkey_sealed")
+    if sealed and not raw_priv:
+        try:
+            import json
+
+            import hsm as wick_hsm
+
+            blob = json.loads(sealed) if isinstance(sealed, str) else sealed
+            raw_priv = wick_hsm.unwrap_private_key(
+                blob, name=name or str(ent.get("name") or ""), rp_id=rp_id
+            )
+        except Exception:
+            return None
+    if not raw_priv or not rp_id:
         return None
     return {
-        "rp_id": str(ent.get("passkey_rpid") or ""),
+        "rp_id": rp_id,
         "credential_id": str(ent.get("passkey_id") or ""),
         "user_handle": str(ent.get("passkey_user_handle") or ""),
-        "private_key": str(ent.get("passkey_private_key") or ""),
+        "private_key": raw_priv,
         "public_key": str(ent.get("passkey_public_key") or ""),
         "sign_count": str(ent.get("passkey_sign_count") or "1"),
         "user_name": str(ent.get("passkey_user") or ent.get("username") or "agent"),
     }
 
 
-PASSKEY_FIELD_NAMES = frozenset(vault_fields({}).keys())
+PASSKEY_FIELD_NAMES = frozenset(set(vault_fields({}).keys()) | {"passkey_sealed", "passkey_seal"})

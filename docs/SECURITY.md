@@ -32,7 +32,7 @@ See [VAULT.md](VAULT.md) and [VAULT-CRYPTO.md](VAULT-CRYPTO.md). Combine with sh
 
 `WICK_REQUIRE_APPROVAL=1` blocks `login` / `fill` / `passkey` / `eval` / `download` until a human or outer harness runs `wick approve …` or sets `WICK_APPROVE`. A page cannot mint this token.
 
-Passkeys: vault-stored resident keys injected via Chromium's CDP virtual authenticator. Not Touch ID / hardware keys. Private keys never appear in agent JSON. See [PASSKEYS.md](PASSKEYS.md).
+Passkeys: vault-stored resident keys, PKCS#8 wrapped with a dedicated AES-256-GCM filewrap key (`$WICK_HOME/vault/passkey.wrap`, `0600`) on top of wickvault2. Injected via Chromium's CDP virtual authenticator. Not Touch ID / hardware keys. `wick vault doctor` / `wick shields` report `hsm: false` unless `/dev/tpmrm0` or a real PKCS#11 token is present. `WICK_PASSKEY_REQUIRE_HSM=1` refuses create when no hardware. Private keys never appear in agent JSON. See [PASSKEYS.md](PASSKEYS.md).
 
 ## Fetch / navigation guards (0.9)
 
@@ -60,7 +60,14 @@ Wick provides **network-layer** privacy inspired by Brave:
 - Per-session cookie jars and Chromium profiles
 - `wick session export` redacts cookie values by default (`--reveal` is full-act only; redacted exports are not importable)
 
-Wick does **not** provide Brave-class fingerprint farbling (canvas / WebGL / audio) or Camoufox-class anti-bot. Those need specialized browser engines. `wick shields` and the docs state this clearly — treat shields as request filtering and isolation, not “undetectable browsing.”
+Wick does **not** provide Brave-class fingerprint farbling (canvas / WebGL / audio) or Camoufox-class anti-bot. Those need specialized browser engines. What it *does* do on the privacy side:
+
+- WebRTC LAN/CGNAT IP guard (`WICK_WEBRTC_IP_GUARD=1`, Chromium `disable_non_proxied_udp`)
+- Reduce User-Agent Client Hints (`WICK_REDUCE_CLIENT_HINTS=1`) — less entropy, not a forged UA
+- Report known fingerprinting hosts/scripts on observe (`security.fingerprint_probes`)
+- Detect CAPTCHA / Cloudflare / Turnstile / hCaptcha / reCAPTCHA and **halt** login/fill/passkey (`human_challenge`). Wick will not solve or auto-click challenges.
+
+Treat shields as request filtering, isolation, and honest halt — not “undetectable browsing.”
 
 ## Proxy credentials
 

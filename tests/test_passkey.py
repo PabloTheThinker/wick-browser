@@ -72,6 +72,7 @@ def test_vault_passkey_never_lists_key(tmp_path, monkeypatch):
     assert listed["entries"][0]["has_passkey"] is True
     listed_s = json.dumps(listed)
     assert "passkey_private_key" not in listed_s
+    assert "passkey_sealed" not in listed_s
     cred_material = out.get("credential_id")  # metadata may include id? should not
     # create_passkey must not echo key material
     assert "private_key" not in out

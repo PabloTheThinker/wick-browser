@@ -22,6 +22,9 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 - Policy file: `WICK_POLICY` / `$WICK_HOME/policy.json` and `wick shields --policy`
 - `WICK_VAULT_REQUIRE_GRANT` / policy `vault_require_grant` — empty grants deny resolve/fill
 - Two-step login: retry fill + Continue/Next when the password field is not visible yet
+- Challenge detect-and-halt (`human_challenge`) — never solve CAPTCHAs
+- WebRTC IP guard + Client Hint reduction; fingerprint *probes* reported, farbling not claimed
+- Passkey filewrap seal (`passkey.wrap` 0600); honest TPM/PKCS#11 probe (`hsm: false` here)
 - Capability profiles: `WICK_PROFILE=observe-only|safe-act|full-act`
 - Outbound allowlist: `WICK_ALLOW_HOSTS=example.com,.github.com`
 - Outbound denylist: `WICK_BLOCK_HOSTS` (deny wins)

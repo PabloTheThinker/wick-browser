@@ -966,6 +966,8 @@ def _passkey_field_names() -> frozenset[str]:
             "passkey_public_key",
             "passkey_sign_count",
             "passkey_user",
+            "passkey_sealed",
+            "passkey_seal",
         }
     )
 
@@ -973,9 +975,11 @@ def _passkey_field_names() -> frozenset[str]:
 def _entry_has_passkey(ent: dict[str, Any] | None) -> bool:
     if not isinstance(ent, dict):
         return False
+    if ent.get("passkey_rpid") and (ent.get("passkey_sealed") or ent.get("passkey_private_key")):
+        return True
     if wick_passkey is not None:
         return wick_passkey.from_entry(ent) is not None
-    return bool(ent.get("passkey_private_key") and ent.get("passkey_rpid"))
+    return False
 
 
 def _visible_field_names(ent: dict[str, Any]) -> list[str]:
@@ -1523,6 +1527,40 @@ def suggest_login(
     }
 
 
+def _seal_passkey_fields(
+    name: str, rp_id: str, fields: dict[str, str]
+) -> tuple[dict[str, str], dict[str, Any] | None]:
+    """Move the PKCS#8 out of the item fields into a dedicated wrap (filewrap / HSM)."""
+    priv = fields.get("passkey_private_key") or ""
+    if not priv:
+        return fields, None
+    try:
+        import hsm as wick_hsm
+    except Exception:
+        return fields, None
+    sealed = wick_hsm.wrap_private_key(priv, name=name, rp_id=rp_id)
+    if not sealed.get("ok"):
+        return fields, {
+            "ok": False,
+            "error": sealed.get("error") or "seal_failed",
+            "hint": sealed.get("hint"),
+            "hsm": False,
+        }
+    out = dict(fields)
+    out.pop("passkey_private_key", None)
+    out["passkey_sealed"] = json.dumps(
+        {
+            "backend": sealed.get("backend"),
+            "hsm": bool(sealed.get("hsm")),
+            "alg": sealed.get("alg"),
+            "blob": sealed.get("blob"),
+        },
+        separators=(",", ":"),
+    )
+    out["passkey_seal"] = str(sealed.get("backend") or "filewrap")
+    return out, None
+
+
 def create_passkey(
     name: str,
     *,
@@ -1544,11 +1582,14 @@ def create_passkey(
         cred = wick_passkey.generate(rid, user_name=username or "agent")
     except ValueError as e:
         return {"ok": False, "error": str(e)}
+    fields, seal_err = _seal_passkey_fields(name, rid, wick_passkey.vault_fields(cred))
+    if seal_err:
+        return seal_err
     out = set_entry(
         name,
         username=username,
         url=url,
-        fields=wick_passkey.vault_fields(cred),
+        fields=fields,
     )
     if not out.get("ok"):
         return out
@@ -1560,6 +1601,8 @@ def create_passkey(
         "rp_id": rid,
         "has_passkey": True,
         "revealed": False,
+        "seal": str(fields.get("passkey_seal") or "legacy"),
+        "hsm": False,
     }
 
 
@@ -1577,11 +1620,14 @@ def save_passkey_from_cdp(
     cred = wick_passkey.from_cdp(raw, rp_id=rid)
     if not cred.get("private_key") or not cred.get("rp_id"):
         return {"ok": False, "error": "incomplete_credential"}
+    fields, seal_err = _seal_passkey_fields(name, cred["rp_id"], wick_passkey.vault_fields(cred))
+    if seal_err:
+        return seal_err
     out = set_entry(
         name,
         username=username or cred.get("user_name"),
         url=url,
-        fields=wick_passkey.vault_fields(cred),
+        fields=fields,
     )
     if not out.get("ok"):
         return out
@@ -1602,6 +1648,19 @@ def export_passkey_for_cdp(name: str, page_url: str) -> dict[str, Any]:
     if wick_passkey is None:
         return {"ok": False, "error": "passkey_module_missing"}
     try:
+        import hsm as wick_hsm
+
+        if wick_hsm.require_hsm() and not wick_hsm.probe().get("hsm"):
+            return {
+                "ok": False,
+                "error": "hsm_required",
+                "hint": "No TPM/PKCS#11 token on this host. Unset WICK_PASSKEY_REQUIRE_HSM to export a filewrap key.",
+            }
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    except Exception:
+        pass
+    try:
         ensure_local_key()
         store = _read_store()
     except ValueError as e:
@@ -1609,7 +1668,7 @@ def export_passkey_for_cdp(name: str, page_url: str) -> dict[str, Any]:
     ent = store.get(name)
     if not isinstance(ent, dict):
         return {"ok": False, "error": "not_found", "name": name}
-    cred = wick_passkey.from_entry(ent)
+    cred = wick_passkey.from_entry(ent, name=name)
     if cred is None:
         return {"ok": False, "error": "no_passkey", "name": name}
     allowed, why = _grant_allows(page_url)
@@ -1635,11 +1694,13 @@ def export_passkey_for_cdp(name: str, page_url: str) -> dict[str, Any]:
         _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail="rpid_mismatch")
         return {"ok": False, "error": "rpid_mismatch"}
     _audit("export_passkey", ref=f"vault://{name}/passkey", ok=True, detail="cdp")
+    seal_backend = str(ent.get("passkey_seal") or ("filewrap" if ent.get("passkey_sealed") else "legacy"))
     return {
         "ok": True,
         "name": name,
         "rp_id": cred["rp_id"],
         "credential": wick_passkey.to_cdp(cred),
+        "seal": {"backend": seal_backend, "hsm": False},
     }
 
 
@@ -1737,7 +1798,22 @@ def doctor() -> dict[str, Any]:
         }
     )
     checks.append({"name": "third_party_audit", "ok": True, "audited": False})
-    checks.append({"name": "hsm", "ok": True, "present": False})
+    try:
+        import hsm as wick_hsm
+
+        hsm_st = wick_hsm.status()
+    except Exception:
+        hsm_st = {"hsm": False, "tpm": False, "seal": "filewrap", "require_hsm": False}
+    checks.append(
+        {
+            "name": "hsm",
+            "ok": True,
+            "present": bool(hsm_st.get("hsm")),
+            "seal": hsm_st.get("seal"),
+            "tpm": bool(hsm_st.get("tpm")),
+            "detail": "hardware HSM/TPM not present — passkeys use filewrap" if not hsm_st.get("hsm") else "hardware present",
+        }
+    )
     checks.append({"name": "cloud_sync", "ok": True, "present": False})
     required = ("vault_dir_0700", "local_backend", "aead_aes_256_gcm")
     return {
@@ -1752,6 +1828,7 @@ def doctor() -> dict[str, Any]:
         "audited": False,
         "hsm": False,
         "sync": False,
+        "seal": "filewrap",
         "require_grant": bool(sess.get("require_grant")),
         "crypto": info,
         "session": sess,

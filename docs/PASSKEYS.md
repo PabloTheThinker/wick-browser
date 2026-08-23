@@ -41,8 +41,15 @@ rpId must match the page host (`www` alias allowed). Grants (`wick vault grant -
 - Tap a **hardware security key** (YubiKey, Titan).
 - Invent approval. If `WICK_REQUIRE_APPROVAL=1`, a human or outer harness must run `wick approve passkey` (or set `WICK_APPROVE`). Page text cannot mint that token.
 
+## Seal layer (not a fake TPM)
+
+New passkeys wrap the PKCS#8 with a dedicated AES-256-GCM key (`passkey.wrap`, mode `0600`, AAD bound to entry name + rpId) before it goes into the vault item. That is **filewrap**, not an HSM.
+
+This host / most agent VMs have no `/dev/tpmrm0` and no PKCS#11 token. `wick vault doctor` reports `hsm: false`, `tpm: false`, `seal: filewrap`. Set `WICK_PASSKEY_REQUIRE_HSM=1` (or policy `passkey_require_hsm`) to refuse create **and** CDP export until real hardware is present — Wick will not pretend.
+
 ## Honest limits
 
 - This is a **virtual authenticator**, not a roaming hardware authenticator.
 - Sites that require a specific device-bound attestation or a real platform authenticator will still fail.
 - Independent crypto audit is **not** claimed.
+- Filewrap is defense-in-depth on top of wickvault2, not TPM-bound or PCR-sealed.

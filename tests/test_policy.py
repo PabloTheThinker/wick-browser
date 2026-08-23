@@ -30,6 +30,8 @@ _ENV = (
     "WICK_APPROVE",
     "WICK_APPROVE_ONCE",
     "WICK_VAULT_REQUIRE_GRANT",
+    "WICK_HALT_ON_CHALLENGE",
+    "WICK_PASSKEY_REQUIRE_HSM",
 )
 
 
@@ -69,6 +71,8 @@ class TestNoPolicyFile(PolicyCase):
         self.assertFalse(eff["allow_private"])
         self.assertEqual(eff["require_approval"], [])
         self.assertFalse(eff["vault_require_grant"])
+        self.assertTrue(eff["halt_on_challenge"])
+        self.assertFalse(eff["passkey_require_hsm"])
         self.assertEqual(eff["source"], "none")
         self.assertIsNone(policy.policy_path())
         self.assertEqual(policy.load_policy(), {})
@@ -247,6 +251,15 @@ class TestPrivateAndGrant(PolicyCase):
         os.environ["WICK_VAULT_REQUIRE_GRANT"] = "1"
         self.assertTrue(policy.vault_require_grant())
 
+    def test_halt_and_hsm_file_and_env(self):
+        self.write({"halt_on_challenge": False, "passkey_require_hsm": True})
+        self.assertFalse(policy.effective()["halt_on_challenge"])
+        self.assertTrue(policy.effective()["passkey_require_hsm"])
+        os.environ["WICK_HALT_ON_CHALLENGE"] = "1"
+        os.environ["WICK_PASSKEY_REQUIRE_HSM"] = "0"
+        self.assertTrue(policy.effective()["halt_on_challenge"])
+        self.assertFalse(policy.effective()["passkey_require_hsm"])
+
 
 class TestBadInput(PolicyCase):
     def test_invalid_json_is_ignored(self):
@@ -304,6 +317,8 @@ class TestValidateAndWrite(PolicyCase):
                 "allow_private": False,
                 "require_approval": ["login", "passkey"],
                 "vault_require_grant": True,
+                "halt_on_challenge": False,
+                "passkey_require_hsm": True,
                 "extra": 1,
             }
         )
@@ -311,6 +326,8 @@ class TestValidateAndWrite(PolicyCase):
         self.assertEqual(res["ignored"], ["extra"])
         self.assertEqual(res["policy"]["profile"], "safe-act")
         self.assertTrue(res["policy"]["vault_require_grant"])
+        self.assertFalse(res["policy"]["halt_on_challenge"])
+        self.assertTrue(res["policy"]["passkey_require_hsm"])
 
     def test_validate_rejects_bad_shapes(self):
         self.assertFalse(policy.validate(["nope"])["ok"])

@@ -1063,6 +1063,8 @@ def cmd_shields(args: argparse.Namespace) -> int:
             "per-session cookie jars",
             "NOT full Brave canvas/WebGL fingerprint farbling (engine limit)",
             "Chromium path: automation hardening flags only — not Camoufox-class stealth",
+            "WebRTC LAN IP guard + Client Hint reduction (privacy, not stealth)",
+            "CAPTCHA/challenge detect-and-halt — Wick will not solve puzzles",
         ],
     }
     if wick_shields:
@@ -1076,6 +1078,18 @@ def cmd_shields(args: argparse.Namespace) -> int:
             info["policy"] = wick_policy.effective()
         except Exception as e:
             info["policy"] = {"ok": False, "error": str(e)}
+    try:
+        import privacy as wick_privacy
+
+        info["privacy"] = wick_privacy.status()
+    except Exception:
+        pass
+    try:
+        import hsm as wick_hsm
+
+        info["hsm"] = wick_hsm.status()
+    except Exception:
+        pass
     if getattr(args, "policy_check", None):
         if wick_policy is None:
             print(json.dumps({"ok": False, "error": "no_policy_module"}))

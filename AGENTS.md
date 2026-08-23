@@ -196,7 +196,9 @@ wick session export job42     # redacted cookie metadata
 
 ## Shields
 
-Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth.
+Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth. WebRTC LAN IPs are blocked; Client Hints are reduced. Canvas/WebGL farbling is **not** claimed.
+
+CAPTCHA / Cloudflare / Turnstile pages halt `login` / `fill` / `click` / `passkey` with `human_challenge`. Wick will not solve them.
 
 ## Speed
 

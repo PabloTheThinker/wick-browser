@@ -178,10 +178,50 @@ class TestChromeFixture(unittest.TestCase):
             raise unittest.SkipTest(f"two-step login did not navigate: {e}")
         self.assertIn("#ok", self.page.url)
 
+    def test_login_halts_on_turnstile_without_solving(self):
+        import vault
+
+        url = f"http://127.0.0.1:{self.port}/challenge.html"
+        vault.ensure_local_key()
+        vault.set_entry(
+            "local-chal",
+            password="s3cret-value-xyz",
+            username="agent@example.com",
+            url=url,
+        )
+        out = self._run("login", url)
+        self.assertFalse(out.get("ok"), out)
+        self.assertEqual(out.get("error"), "human_challenge")
+        self.assertEqual(out.get("kind"), "turnstile")
+        self.assertFalse(out.get("solves"))
+        dump = json.dumps(out).lower()
+        self.assertNotIn("s3cret-value-xyz", dump)
+        self.assertNotIn("2captcha", dump)
+        self.assertNotIn("solver", dump)
+
+    def test_click_halts_on_turnstile_without_solving(self):
+        url = f"http://127.0.0.1:{self.port}/challenge.html"
+        gone = self._run("goto", url)
+        self.assertTrue(gone.get("ok"), gone)
+        self.assertTrue((gone.get("challenge") or {}).get("found"))
+        clicked = self._run("click", "css=button")
+        self.assertFalse(clicked.get("ok"), clicked)
+        self.assertEqual(clicked.get("error"), "human_challenge")
+        self.assertFalse(clicked.get("solves"))
+        dump = json.dumps(clicked).lower()
+        self.assertNotIn("2captcha", dump)
+        self.assertNotIn("bypass", dump)
+
     def test_login_refuses_example_com_vault_on_localhost(self):
         import vault
 
         vault.ensure_local_key()
+        # Other fixture tests save 127.0.0.1 entries; those would match this origin.
+        for name in ("local-chal", "local-login", "local-pk"):
+            try:
+                vault.delete_entry(name)
+            except Exception:
+                pass
         vault.set_entry(
             "example",
             password="s3cret-value-xyz",

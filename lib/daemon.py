@@ -118,12 +118,20 @@ def main() -> int:
             "--metrics-recording-only",
             "--password-store=basic",
             "--use-mock-keychain",
-        "--disable-blink-features=AutomationControlled",
-        "--no-pings",
+            "--disable-blink-features=AutomationControlled",
+            "--no-pings",
             "--disable-client-side-phishing-detection",
             "--disable-component-update",
             "--disable-breakpad",
         ]
+        try:
+            import privacy as wick_privacy
+
+            for flag in wick_privacy.chrome_privacy_args():
+                if flag not in launch_args:
+                    launch_args.append(flag)
+        except Exception:
+            pass
         extra_headers = {}
         if os.environ.get("WICK_PRIVACY_HEADERS", "1") != "0":
             extra_headers = {

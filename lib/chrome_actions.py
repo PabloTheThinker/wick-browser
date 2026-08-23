@@ -52,6 +52,10 @@ try:
     import passkey as wick_passkey
 except Exception:
     wick_passkey = None  # type: ignore
+try:
+    import challenge as wick_challenge
+except Exception:
+    wick_challenge = None  # type: ignore
 
 
 def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
@@ -322,7 +326,39 @@ def resolve_locator(page, sel: str):
     return page.locator(sel)
 
 
+# Interact / secret actions halt on a detected challenge. Observe (goto,
+# screenshot, content) still works so a human can see the page.
+_CHALLENGE_HALT_NOW = frozenset(
+    {
+        "click",
+        "click_n",
+        "click_xy",
+        "dblclick",
+        "doubleclick",
+        "rightclick",
+        "contextclick",
+        "type",
+        "type_n",
+        "fill",
+        "select",
+        "check",
+        "eval",
+        "download",
+    }
+)
+
+
+def _challenge_halt(page) -> dict | None:
+    if wick_challenge is None:
+        return None
+    return wick_challenge.deny_if_halted(wick_challenge.page_challenge(page))
+
+
 def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
+    if action in _CHALLENGE_HALT_NOW:
+        blocked = _challenge_halt(page)
+        if blocked:
+            return 1, blocked
     if action == "goto":
         url, err = _guard_nav_url(args[0])
         if err:
@@ -332,7 +368,12 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             page.wait_for_load_state("networkidle", timeout=8000)
         except Exception:
             pass
-        return 0, {"ok": True, "url": page.url, "title": page.title()}
+        out: dict = {"ok": True, "url": page.url, "title": page.title()}
+        if wick_challenge is not None:
+            hit = wick_challenge.page_challenge(page)
+            if hit.get("found"):
+                out["challenge"] = hit
+        return 0, out
 
     elif action == "click" and wick_cu is not None and wick_cu.looks_like_xy(args):
         x, y = wick_cu.parse_xy(args)
@@ -587,6 +628,9 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
+        blocked = _challenge_halt(page)
+        if blocked:
+            return 1, blocked
         if wick_vault is None:
             return 1, {"ok": False, "error": "vault_module_missing"}
         matched = wick_vault.match_url(page.url)
@@ -843,6 +887,9 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
+        blocked = _challenge_halt(page)
+        if blocked:
+            return 1, blocked
         if wick_vault is None:
             return 1, {"ok": False, "error": "vault_module_missing"}
         if not name:
@@ -892,6 +939,9 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
+        blocked = _challenge_halt(page)
+        if blocked:
+            return 1, blocked
         if wick_vault is None:
             return 1, {"ok": False, "error": "vault_module_missing"}
         try:
