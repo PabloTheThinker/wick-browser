@@ -14,6 +14,7 @@ cron wrappers, sandboxes). A policy file gives it one place to pin the rules:
       "require_approval": ["login", "passkey"],
       "vault_require_grant": true,
       "halt_on_challenge": true,
+      "challenge_computer_use": false,
       "passkey_require_hsm": false
     }
 
@@ -26,6 +27,7 @@ Merge rules (env stays authoritative where it is more explicit, deny wins):
   require_approval    union of file + WICK_REQUIRE_APPROVAL (true = all sensitive)
   vault_require_grant WICK_VAULT_REQUIRE_GRANT wins when set
   halt_on_challenge   WICK_HALT_ON_CHALLENGE wins when set (default on)
+  challenge_computer_use WICK_CHALLENGE_COMPUTER_USE wins when set
   passkey_require_hsm WICK_PASSKEY_REQUIRE_HSM wins when set
 
 Unknown keys are ignored. A missing or unparseable file is an empty policy —
@@ -47,6 +49,7 @@ KEYS = (
     "require_approval",
     "vault_require_grant",
     "halt_on_challenge",
+    "challenge_computer_use",
     "passkey_require_hsm",
 )
 FALLBACK_PROFILES = ("observe-only", "safe-act", "full-act")
@@ -182,7 +185,13 @@ def validate(obj: Any) -> dict[str, Any]:
                 "hint": "one of " + ", ".join(FALLBACK_PROFILES),
             }
         norm["profile"] = name
-    for key in ("allow_private", "vault_require_grant", "halt_on_challenge", "passkey_require_hsm"):
+    for key in (
+        "allow_private",
+        "vault_require_grant",
+        "halt_on_challenge",
+        "challenge_computer_use",
+        "passkey_require_hsm",
+    ):
         if key in obj and obj[key] is not None:
             flag = _norm_bool(obj[key])
             if flag is None:
@@ -230,7 +239,13 @@ def _overlay(obj: dict[str, Any]) -> dict[str, Any]:
     prof = obj.get("profile")
     if isinstance(prof, str) and prof.strip():
         out["profile"] = prof.strip().lower()
-    for key in ("allow_private", "vault_require_grant", "halt_on_challenge", "passkey_require_hsm"):
+    for key in (
+        "allow_private",
+        "vault_require_grant",
+        "halt_on_challenge",
+        "challenge_computer_use",
+        "passkey_require_hsm",
+    ):
         flag = _norm_bool(obj.get(key))
         if flag is not None:
             out[key] = flag
@@ -277,6 +292,13 @@ def effective() -> dict[str, Any]:
         else bool(file_policy["halt_on_challenge"] if "halt_on_challenge" in file_policy else True)
     )
 
+    env_cu = _env_bool("WICK_CHALLENGE_COMPUTER_USE")
+    challenge_computer_use = (
+        env_cu
+        if env_cu is not None
+        else bool(file_policy.get("challenge_computer_use") or False)
+    )
+
     env_hsm = _env_bool("WICK_PASSKEY_REQUIRE_HSM")
     passkey_require_hsm = (
         env_hsm
@@ -295,6 +317,7 @@ def effective() -> dict[str, Any]:
         "require_approval": list(file_policy.get("require_approval") or []),
         "vault_require_grant": require_grant,
         "halt_on_challenge": halt_on_challenge,
+        "challenge_computer_use": challenge_computer_use,
         "passkey_require_hsm": passkey_require_hsm,
         "path": str(path) if path else None,
         "source": source,

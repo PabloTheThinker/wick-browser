@@ -138,7 +138,8 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_APPROVE` | — | Harness-granted actions (`login`, `passkey`, `*`) |
 | `WICK_POLICY` | `$WICK_HOME/policy.json` | Policy file: host allow/deny, profile, approvals, vault grant (env wins; deny unions) |
 | `WICK_VAULT_REQUIRE_GRANT` | `0` | Deny vault resolve/fill unless `wick vault grant --url` is active |
-| `WICK_HALT_ON_CHALLENGE` | `1` | Halt login/fill/passkey when a CAPTCHA/bot-wall is detected (never solve) |
+| `WICK_HALT_ON_CHALLENGE` | `1` | Halt vault login/secret fill/passkey on a CAPTCHA/bot-wall |
+| `WICK_CHALLENGE_COMPUTER_USE` | `0` | Allow `cu` / click / type on a challenge (desktop Hermes / Grokbot). Secrets stay blocked. Auto-on when headed or an XDG user seat. |
 | `WICK_WEBRTC_IP_GUARD` | `1` | Chromium: no LAN ICE candidates |
 | `WICK_REDUCE_CLIENT_HINTS` | `1` | Drop User-Agent Client Hints (privacy, not UA spoof) |
 | `WICK_PASSKEY_REQUIRE_HSM` | `0` | Refuse passkey create unless a TPM/PKCS#11 token is present |

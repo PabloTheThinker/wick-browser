@@ -142,7 +142,33 @@ def plan_suggestions(
     except Exception:
         _login_form = None  # type: ignore
     login = _login_form.detect_login_fields(elements) if _login_form is not None else None
-    if login and login.get("is_login"):
+    chal = None
+    try:
+        import challenge as _challenge
+
+        chal = _challenge.detect(url=url, title=title, excerpt=excerpt, elements=elements)
+    except Exception:
+        chal = None
+    if chal and chal.get("found"):
+        if chal.get("computer_use"):
+            out.append({
+                "action": "cu",
+                "cmd": "wick act cu",
+                "why": (
+                    "human challenge — computer-use (screenshot + click_xy / type) "
+                    "like Hermes / Grokbot; vault login stays blocked"
+                ),
+            })
+        else:
+            out.append({
+                "action": "cu",
+                "cmd": "wick act cu",
+                "why": (
+                    "human challenge — vault login/click halted here; "
+                    "headed desktop or WICK_CHALLENGE_COMPUTER_USE=1 allows computer-use"
+                ),
+            })
+    elif login and login.get("is_login"):
         out.append({
             "action": "login",
             "cmd": f"wick act login {url!r}",

@@ -326,9 +326,10 @@ def resolve_locator(page, sel: str):
     return page.locator(sel)
 
 
-# Interact / secret actions halt on a detected challenge. Observe (goto,
-# screenshot, content) still works so a human can see the page.
-_CHALLENGE_HALT_NOW = frozenset(
+# Secret injection always halts on a challenge. Click/type may proceed when
+# a desktop computer-use agent (Hermes / Grokbot) is allowed to complete it.
+_CHALLENGE_SECRET = frozenset({"eval", "download"})
+_CHALLENGE_INTERACT = frozenset(
     {
         "click",
         "click_n",
@@ -348,21 +349,40 @@ _CHALLENGE_HALT_NOW = frozenset(
         "move",
         "hover",
         "scroll_xy",
-        "eval",
-        "download",
     }
 )
 
 
-def _challenge_halt(page) -> dict | None:
+def _secret_text_for_action(action: str, args: list[str]) -> str:
+    if action in ("fill", "select") and len(args) > 1:
+        return args[1]
+    if action == "type_n" and len(args) > 1:
+        return args[1]
+    if action == "type" and args:
+        return args[0]
+    return ""
+
+
+def _challenge_halt(page, action: str, *, secret: bool = False) -> dict | None:
     if wick_challenge is None:
         return None
-    return wick_challenge.deny_if_halted(wick_challenge.page_challenge(page))
+    return wick_challenge.deny_if_halted(
+        wick_challenge.page_challenge(page), action=action, secret=secret
+    )
 
 
 def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
-    if action in _CHALLENGE_HALT_NOW:
-        blocked = _challenge_halt(page)
+    if action in _CHALLENGE_SECRET or action in _CHALLENGE_INTERACT:
+        secret = action in _CHALLENGE_SECRET
+        text = _secret_text_for_action(action, args)
+        if (
+            not secret
+            and text
+            and wick_vault is not None
+            and wick_vault.is_secret_ref(text)
+        ):
+            secret = True
+        blocked = _challenge_halt(page, action, secret=secret)
         if blocked:
             return 1, blocked
     if action == "goto":
@@ -634,7 +654,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
-        blocked = _challenge_halt(page)
+        blocked = _challenge_halt(page, "login", secret=True)
         if blocked:
             return 1, blocked
         if wick_vault is None:
@@ -893,7 +913,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
-        blocked = _challenge_halt(page)
+        blocked = _challenge_halt(page, "passkey", secret=True)
         if blocked:
             return 1, blocked
         if wick_vault is None:
@@ -945,7 +965,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
-        blocked = _challenge_halt(page)
+        blocked = _challenge_halt(page, "passkey_register", secret=True)
         if blocked:
             return 1, blocked
         if wick_vault is None:

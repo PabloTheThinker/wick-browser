@@ -86,6 +86,7 @@ def annotate_observe(
             sec["human_challenge"] = {
                 "kind": hit.get("kind"),
                 "halt": hit.get("halt"),
+                "computer_use": bool(hit.get("computer_use")),
                 "solves": False,
             }
     except Exception:

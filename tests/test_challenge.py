@@ -14,8 +14,34 @@ if str(_LIB) not in sys.path:
 
 import challenge  # noqa: E402
 
+_CU_ENV = (
+    "WICK_CHALLENGE_COMPUTER_USE",
+    "WICK_HEADED",
+    "WICK_HEADLESS",
+    "WICK_XVFB",
+    "WAYLAND_DISPLAY",
+    "XDG_SESSION_TYPE",
+    "XDG_CURRENT_DESKTOP",
+    "DESKTOP_SESSION",
+)
 
-class TestChallengeDetect(unittest.TestCase):
+
+class _CuEnv:
+    """Isolate desktop/CU flags so CI DISPLAY=:1 does not look like a user seat."""
+
+    def setUp(self):
+        self._saved = {k: os.environ.pop(k, None) for k in _CU_ENV}
+        os.environ["WICK_CHALLENGE_COMPUTER_USE"] = "0"
+
+    def tearDown(self):
+        for k in _CU_ENV:
+            os.environ.pop(k, None)
+        for k, v in self._saved.items():
+            if v is not None:
+                os.environ[k] = v
+
+
+class TestChallengeDetect(_CuEnv, unittest.TestCase):
     def test_turnstile_in_html(self):
         hit = challenge.detect(
             url="https://example.com/login",
@@ -92,8 +118,9 @@ class TestChallengeDetect(unittest.TestCase):
             os.environ.pop("WICK_HALT_ON_CHALLENGE", None)
 
 
-class TestChallengePolicy(unittest.TestCase):
+class TestChallengePolicy(_CuEnv, unittest.TestCase):
     def setUp(self):
+        super().setUp()
         self._tmp = tempfile.TemporaryDirectory(prefix="wick-chal-")
         os.environ["WICK_HOME"] = self._tmp.name
         os.environ.pop("WICK_POLICY", None)
@@ -104,6 +131,7 @@ class TestChallengePolicy(unittest.TestCase):
         os.environ.pop("WICK_POLICY", None)
         os.environ.pop("WICK_HALT_ON_CHALLENGE", None)
         self._tmp.cleanup()
+        super().tearDown()
 
     def test_policy_can_force_halt(self):
         import json
@@ -115,6 +143,86 @@ class TestChallengePolicy(unittest.TestCase):
         self.assertFalse(challenge.halt_on_challenge())
         os.environ["WICK_HALT_ON_CHALLENGE"] = "1"
         self.assertTrue(challenge.halt_on_challenge())
+
+
+class TestComputerUseOnChallenge(_CuEnv, unittest.TestCase):
+    """Desktop / Hermes / Grokbot may click a challenge; vault secrets may not."""
+
+    def _hit(self):
+        return challenge.detect(html='<div class="cf-turnstile" data-sitekey="x"></div>')
+
+    def test_headless_cloud_disallows_computer_use(self):
+        self.assertFalse(challenge.computer_use_allowed())
+        hit = self._hit()
+        self.assertFalse(hit["computer_use"])
+        self.assertIsNotNone(challenge.deny_if_halted(hit, action="click"))
+        self.assertIsNotNone(challenge.deny_if_halted(hit, action="login"))
+
+    def test_explicit_flag_allows_click_not_login(self):
+        os.environ["WICK_CHALLENGE_COMPUTER_USE"] = "1"
+        self.assertTrue(challenge.computer_use_allowed())
+        hit = self._hit()
+        self.assertTrue(hit["computer_use"])
+        self.assertTrue(hit["halt"])
+        self.assertIsNone(challenge.deny_if_halted(hit, action="click"))
+        self.assertIsNone(challenge.deny_if_halted(hit, action="click_xy"))
+        self.assertIsNone(challenge.deny_if_halted(hit, action="type"))
+        self.assertIsNone(challenge.deny_if_halted(hit, action="key"))
+        self.assertIsNone(challenge.deny_if_halted(hit, action="drag"))
+        blocked = challenge.deny_if_halted(hit, action="login")
+        self.assertIsNotNone(blocked)
+        self.assertEqual(blocked["error"], "human_challenge")
+        self.assertFalse(blocked["solves"])
+        self.assertIsNotNone(challenge.deny_if_halted(hit, action="passkey"))
+        self.assertIsNotNone(challenge.deny_if_halted(hit, action="fill", secret=True))
+        self.assertIsNone(challenge.deny_if_halted(hit, action="fill", secret=False))
+
+    def test_headed_desktop_session_allows_computer_use(self):
+        os.environ.pop("WICK_CHALLENGE_COMPUTER_USE", None)
+        os.environ["WICK_HEADLESS"] = "0"
+        self.assertTrue(challenge.desktop_session())
+        self.assertTrue(challenge.computer_use_allowed())
+
+    def test_xdg_user_seat_allows_computer_use(self):
+        os.environ.pop("WICK_CHALLENGE_COMPUTER_USE", None)
+        os.environ["XDG_SESSION_TYPE"] = "wayland"
+        os.environ["XDG_CURRENT_DESKTOP"] = "GNOME"
+        self.assertTrue(challenge.desktop_session())
+        self.assertTrue(challenge.computer_use_allowed())
+
+    def test_display_alone_is_not_a_user_desktop(self):
+        os.environ.pop("WICK_CHALLENGE_COMPUTER_USE", None)
+        os.environ["DISPLAY"] = ":1"
+        self.assertFalse(challenge.desktop_session())
+        self.assertFalse(challenge.computer_use_allowed())
+
+    def test_cu_hint_has_no_solver_and_names_computer_use(self):
+        os.environ["WICK_CHALLENGE_COMPUTER_USE"] = "1"
+        hit = self._hit()
+        hint = (hit.get("hint") or "").lower()
+        self.assertIn("computer-use", hint.replace(" ", "-") if "computer use" not in hint else hint)
+        self.assertIn("cu", hint)
+        blob = json_blob(hit).lower()
+        for banned in ("2captcha", "anticaptcha", "solver", "bypass", "auto-submit"):
+            self.assertNotIn(banned, blob)
+
+    def test_policy_can_enable_computer_use(self):
+        import json
+        import policy
+
+        tmp = tempfile.TemporaryDirectory(prefix="wick-cu-pol-")
+        try:
+            os.environ["WICK_HOME"] = tmp.name
+            path = Path(tmp.name) / "policy.json"
+            path.write_text(json.dumps({"challenge_computer_use": True}), encoding="utf-8")
+            os.environ["WICK_POLICY"] = str(path)
+            os.environ.pop("WICK_CHALLENGE_COMPUTER_USE", None)
+            self.assertTrue(policy.effective()["challenge_computer_use"])
+            self.assertTrue(challenge.computer_use_allowed())
+        finally:
+            os.environ.pop("WICK_POLICY", None)
+            os.environ.pop("WICK_HOME", None)
+            tmp.cleanup()
 
 
 def json_blob(obj) -> str:

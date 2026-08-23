@@ -31,6 +31,7 @@ _ENV = (
     "WICK_APPROVE_ONCE",
     "WICK_VAULT_REQUIRE_GRANT",
     "WICK_HALT_ON_CHALLENGE",
+    "WICK_CHALLENGE_COMPUTER_USE",
     "WICK_PASSKEY_REQUIRE_HSM",
 )
 
@@ -72,6 +73,7 @@ class TestNoPolicyFile(PolicyCase):
         self.assertEqual(eff["require_approval"], [])
         self.assertFalse(eff["vault_require_grant"])
         self.assertTrue(eff["halt_on_challenge"])
+        self.assertFalse(eff["challenge_computer_use"])
         self.assertFalse(eff["passkey_require_hsm"])
         self.assertEqual(eff["source"], "none")
         self.assertIsNone(policy.policy_path())

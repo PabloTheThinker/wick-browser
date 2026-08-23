@@ -1064,7 +1064,7 @@ def cmd_shields(args: argparse.Namespace) -> int:
             "NOT full Brave canvas/WebGL fingerprint farbling (engine limit)",
             "Chromium path: automation hardening flags only — not Camoufox-class stealth",
             "WebRTC LAN IP guard + Client Hint reduction (privacy, not stealth)",
-            "CAPTCHA/challenge detect-and-halt — Wick will not solve puzzles",
+            "CAPTCHA: vault login/secrets halt; desktop computer-use may click the widget — no third-party service",
         ],
     }
     if wick_shields:

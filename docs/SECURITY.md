@@ -65,7 +65,7 @@ Wick does **not** provide Brave-class fingerprint farbling (canvas / WebGL / aud
 - WebRTC LAN/CGNAT IP guard (`WICK_WEBRTC_IP_GUARD=1`, Chromium `disable_non_proxied_udp`)
 - Reduce User-Agent Client Hints (`WICK_REDUCE_CLIENT_HINTS=1`) — less entropy, not a forged UA
 - Report known fingerprinting hosts/scripts on observe (`security.fingerprint_probes`)
-- Detect CAPTCHA / Cloudflare / Turnstile / hCaptcha / reCAPTCHA and **halt** login/fill/passkey (`human_challenge`). Wick will not solve or auto-click challenges.
+- Detect CAPTCHA / Cloudflare / Turnstile / hCaptcha / reCAPTCHA. Vault **login / secret fill / passkey** halt (`human_challenge`). On a headed desktop or with `WICK_CHALLENGE_COMPUTER_USE=1`, computer-use (`cu` / `click_xy` / `type`) may complete the widget the way Hermes or Grokbot would. Wick will not send puzzles to a third-party service.
 
 Treat shields as request filtering, isolation, and honest halt — not “undetectable browsing.”
 

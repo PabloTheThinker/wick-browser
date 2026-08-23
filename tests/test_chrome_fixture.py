@@ -212,6 +212,36 @@ class TestChromeFixture(unittest.TestCase):
         self.assertNotIn("2captcha", dump)
         self.assertNotIn("bypass", dump)
 
+    def test_computer_use_may_click_challenge_but_login_stays_blocked(self):
+        import vault
+
+        os.environ["WICK_CHALLENGE_COMPUTER_USE"] = "1"
+        try:
+            url = f"http://127.0.0.1:{self.port}/challenge.html"
+            gone = self._run("goto", url)
+            self.assertTrue(gone.get("ok"), gone)
+            self.assertTrue((gone.get("challenge") or {}).get("found"))
+            clicked = self._run("click", "css=button")
+            self.assertTrue(clicked.get("ok"), clicked)
+            vault.ensure_local_key()
+            vault.set_entry(
+                "local-chal-cu",
+                password="s3cret-value-xyz",
+                username="agent@example.com",
+                url=url,
+            )
+            login = self._run("login", url)
+            self.assertFalse(login.get("ok"), login)
+            self.assertEqual(login.get("error"), "human_challenge")
+            self.assertFalse(login.get("solves"))
+            self.assertNotIn("s3cret-value-xyz", json.dumps(login))
+        finally:
+            os.environ.pop("WICK_CHALLENGE_COMPUTER_USE", None)
+            try:
+                vault.delete_entry("local-chal-cu")
+            except Exception:
+                pass
+
     def test_login_refuses_example_com_vault_on_localhost(self):
         import vault
 

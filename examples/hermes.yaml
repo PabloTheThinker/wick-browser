@@ -9,4 +9,6 @@ mcp_servers:
       WICK_PROFILE: safe-act
       WICK_SNAP_PROFILE: default
       WICK_ALLOW_HOSTS: example.com
+      # Desktop / Hermes computer-use may click challenges; vault login still blocked.
+      WICK_CHALLENGE_COMPUTER_USE: "1"
     timeout: 120
