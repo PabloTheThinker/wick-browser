@@ -23,7 +23,7 @@ make scrub-check
 
 - Small, focused diffs preferred  
 - Update docs when commands change  
-- Run `make smoke` and `make scrub-check` before push  
+- Run `make test` (pytest), `make smoke`, and `make scrub-check` before push
 - Describe security impact if touching shields, proxy, or downloads  
 
 ## Code layout

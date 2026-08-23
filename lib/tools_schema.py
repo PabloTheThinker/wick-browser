@@ -142,7 +142,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 "rest": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Action arguments. cu: [optional screenshot path]. click_xy: [x, y]. click_n: [n]. type: [text]. fill: [selector, text_or_secret_ref].",
+                    "description": "Action arguments. cu: [optional screenshot path]. click_xy: [x, y]. click_n: [n]. type: [text]. fill: [selector, text_or_secret_ref]. Optional --expect-url-fragment FRAG and --expect-element SEL.",
                     "default": [],
                 },
             },

@@ -117,6 +117,7 @@ wick act pdf /tmp/out.pdf
 
 - **`role=` selectors** — `role=ROLE[name="…"]` hints from `snap` / `plan` / `ask` resolve to Playwright `get_by_role` on `click`, `fill`, and `hover`. CSS/text selectors still work.
 - **`wait_url FRAGMENT [timeout_ms]`** — block until the page URL contains the fragment (default timeout 30000ms). Use after a click that navigates.
+- **`--expect-url-fragment` / `--expect-element`** — after click/fill/login, fail with `expect_failed` (retryable) unless the next page matches. A click that "succeeds" but does not navigate is not success.
 
 ## Computer use (screenshot + numbered targets)
 

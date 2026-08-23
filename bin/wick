@@ -1134,6 +1134,10 @@ def cmd_act(args: argparse.Namespace) -> int:
             print(json.dumps(st))
             return 1
     rest = list(args.rest or [])
+    if getattr(args, "expect_url_fragment", None):
+        rest += ["--expect-url-fragment", args.expect_url_fragment]
+    if getattr(args, "expect_element", None):
+        rest += ["--expect-element", args.expect_element]
     resolved, vmeta = _resolve_act_rest(args.action, rest)
     if resolved is None:
         print(json.dumps(vmeta or {"ok": False, "error": "vault_resolve_failed"}))
@@ -2177,6 +2181,10 @@ def _rpc_handlers() -> dict:
           if denied:
               return denied
       rest = [str(x) for x in (args.get("rest") or [])]
+      if args.get("expect_url_fragment"):
+          rest += ["--expect-url-fragment", str(args["expect_url_fragment"])]
+      if args.get("expect_element"):
+          rest += ["--expect-element", str(args["expect_element"])]
       resolved, vmeta = _resolve_act_rest(str(action), rest)
       if resolved is None:
           return vmeta or {"ok": False, "error": "vault_resolve_failed"}
@@ -2572,6 +2580,8 @@ def main() -> int:
     ])
     p.add_argument("rest", nargs="*",
         help="URL / selector / value / x y (click_xy) / n (click_n) / text (type)")
+    p.add_argument("--expect-url-fragment", help="fail the act unless the page URL contains this fragment")
+    p.add_argument("--expect-element", help="fail the act unless this selector is visible")
     _add_json_only(p)
 
     p = sub.add_parser("run", help="Run JSON playbook of open/fetch/click/... steps")
