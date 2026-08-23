@@ -137,6 +137,20 @@ def plan_suggestions(
 ) -> list[dict[str, Any]]:
     """Goal-agnostic next-step hints for agents (built from snap data)."""
     out: list[dict[str, Any]] = []
+    try:
+        import login_form as _login_form
+    except Exception:
+        _login_form = None  # type: ignore
+    login = _login_form.detect_login_fields(elements) if _login_form is not None else None
+    if login and login.get("is_login"):
+        out.append({
+            "action": "login",
+            "cmd": f"wick act login {url!r}",
+            "why": (
+                "password field detected — origin-bound vault autofill "
+                f"(also: wick vault suggest --url {url!r})"
+            ),
+        })
     out.append({
         "action": "open",
         "cmd": f"wick open {url!r} --max 8000",

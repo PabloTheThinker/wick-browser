@@ -131,13 +131,13 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_act",
-        "Chromium interactive action. For passwords pass secret refs as the text arg (vault://…, pass://…, env://…) so values never enter agent context.",
+        "Chromium interactive action. For passwords pass secret refs (vault://…, pass://…, env://…). Prefer action=login for origin-bound autofill like a human password manager.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "Action name: goto, click, fill, wait_url, scroll, pdf, …",
+                    "description": "Action name: goto, click, fill, login, wait_url, scroll, pdf, …",
                 },
                 "rest": {
                     "type": "array",
@@ -170,14 +170,14 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_vault",
-        "Password vault status/list/match (metadata only). For fill use secret refs: vault://name/password, pass://Vault/Item/password, env://VAR, agentmail://token — never request reveal.",
+        "Password vault status/list/match/suggest (metadata only). suggest/autofill returns origin-bound refs and login cmds — never secrets. Fill via wick_act login or fill with vault:// refs.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "backends", "doctor", "list", "match", "init"],
-                    "description": "Metadata actions only. Secrets are injected via wick_act fill with refs.",
+                    "enum": ["status", "backends", "doctor", "list", "match", "suggest", "autofill", "init"],
+                    "description": "Metadata actions only. Never request reveal. Use suggest then wick_act login.",
                 },
                 "url": {
                     "type": "string",

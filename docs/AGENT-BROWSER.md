@@ -1,6 +1,6 @@
 # Wick as an agent browser
 
-Wick 0.6.1 is built so agents can **observe → plan → ask → act** without a human GUI in the loop. One JSON surface. Two engines. No drama.
+Wick 0.9 is built so agents can **observe → plan → ask → act** (and **login**) without a human GUI in the loop. One JSON surface. Two engines. No drama.
 
 ## Wick brothers
 
@@ -95,7 +95,13 @@ New in 0.6.1:
 - **`role=` selectors resolve natively.** `click`, `fill`, and `hover` accept `role=ROLE[name="…"]` — the exact `hint` strings from `snap` / `plan` / `ask` — and translate them to Playwright `get_by_role`. CSS and `text=` selectors keep working unchanged.
 - **`wait_url FRAGMENT [timeout_ms]`** — block until the current URL contains the fragment (default 30000ms). The reliable way to follow a navigation triggered by a click.
 
-Tabs, cookies, screenshots, and downloads live on this path. See [SHIELDS-AND-ACTIONS.md](SHIELDS-AND-ACTIONS.md) and [WICK-0.6.md](WICK-0.6.md).
+New in 0.9:
+
+- **`wick act login URL`** — Chrome/Brave-style autofill: match a vault entry to the page origin, fill username/password (and TOTP if present), optionally submit. Secrets never appear in JSON.
+- **`wick vault suggest --url`** — agent-safe recipe (`refs` + form hints + `login_cmd`).
+- Fill of `vault://` refs is **origin-bound** to the live page. Phishing URLs do not get the password.
+
+Tabs, cookies, screenshots, and downloads live on this path. See [SHIELDS-AND-ACTIONS.md](SHIELDS-AND-ACTIONS.md) and [WICK-0.9.md](WICK-0.9.md).
 
 ## Session
 

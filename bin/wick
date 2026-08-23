@@ -56,8 +56,16 @@ try:
     import vault as wick_vault
 except Exception:
     wick_vault = None  # type: ignore
+try:
+    import origins as wick_origins
+except Exception:
+    wick_origins = None  # type: ignore
+try:
+    import observe_cache as wick_observe_cache
+except Exception:
+    wick_observe_cache = None  # type: ignore
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 
 def _hist(kind: str, **kw) -> None:
@@ -405,10 +413,6 @@ def lp_fetch(
       - block-private-networks = basic SSRF guard for agent loops
       - http-cache-dir cuts repeat-read cost on same host
     """
-    lp_bin = find_lightpanda()
-    if not lp_bin:
-        return {"ok": False, "product": "wick", "error": "lightpanda_not_found"}
-
     urls = [url] if isinstance(url, str) else list(url)
     if not urls:
         return {"ok": False, "product": "wick", "error": "no_url"}
@@ -416,6 +420,24 @@ def lp_fetch(
     if not cleaned_urls or any(not u for u in cleaned_urls):
         return {"ok": False, "product": "wick", "error": "no_url"}
     urls = cleaned_urls
+    if wick_origins is not None:
+        guarded: list[str] = []
+        for u in urls:
+            err = wick_origins.guard_fetch_url(u)
+            if err:
+                return err
+            if "://" not in u:
+                try:
+                    guarded.append(wick_origins.normalize_agent_url(u))
+                except ValueError as e:
+                    return {"ok": False, "product": "wick", "error": str(e)}
+            else:
+                guarded.append(u)
+        urls = guarded
+
+    lp_bin = find_lightpanda()
+    if not lp_bin:
+        return {"ok": False, "product": "wick", "error": "lightpanda_not_found"}
 
     ensure()
     cmd: list[str] = [str(lp_bin), "fetch", *urls, "--json"]
@@ -1069,25 +1091,12 @@ def cmd_session(args: argparse.Namespace) -> int:
 
 
 def _resolve_act_rest(action: str, rest: list[str]) -> tuple[list[str] | None, dict | None]:
-    """Resolve vault/pass/env refs in fill/select values. Never returns secrets in meta."""
-    if action not in ("fill", "select") or len(rest) < 2:
-        return list(rest), None
-    raw = rest[1]
-    if wick_vault is None or not wick_vault.is_secret_ref(raw):
-        return list(rest), None
-    try:
-        value, meta = wick_vault.resolve_for_fill(raw, reason=f"wick_act_{action}")
-    except ValueError as e:
-        return None, {"ok": False, "error": "vault_resolve_failed", "detail": str(e)[:160], "ref": wick_vault._redact_ref(raw)}
-    out = list(rest)
-    out[1] = value
-    info = {
-        "vault_resolved": True,
-        "ref": meta.get("ref"),
-        "backend": meta.get("backend"),
-        "chars": meta.get("chars"),
-    }
-    return out, info
+    """Pass secret refs through to Chromium so fill is origin-bound to the live page.
+
+    Resolving here would inject the password before we know the page origin
+    (phishing). chrome_actions.py resolves vault:// against page.url.
+    """
+    return list(rest), None
 
 
 def cmd_act(args: argparse.Namespace) -> int:
@@ -1163,6 +1172,7 @@ def cmd_vault(args: argparse.Namespace) -> int:
             notes=getattr(args, "notes", None),
             fields=fields or None,
             tags=list(tags) if tags else None,
+            allow_subdomains=bool(getattr(args, "allow_subdomains", False)) or None,
         )
         # Scrub env one-shot after use
         if "WICK_VAULT_SET_PASSWORD" in os.environ:
@@ -1200,6 +1210,19 @@ def cmd_vault(args: argparse.Namespace) -> int:
             )
             return 0
         out = wick_vault.resolve(ref, reason="cli_resolve_reveal")
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act in ("suggest", "autofill"):
+        url = getattr(args, "url", None) or getattr(args, "name", None) or ""
+        if not url:
+            print(json.dumps({"ok": False, "error": "missing_url", "hint": "wick vault suggest --url https://example.com/login"}))
+            return 2
+        elements = None
+        if wick_elements is not None:
+            snap = _gather_snap(url, fast=True, elements_limit=40, link_limit=0)
+            if snap.get("ok"):
+                elements = snap.get("elements") or []
+        out = wick_vault.suggest_login(url, elements=elements)
         print(json.dumps(out, ensure_ascii=False))
         return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown_vault_action:{act}"}))
@@ -1254,7 +1277,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if r.get("ok"):
                     r = {"ok": True, "url": url, "links": extract_md_links(r.get("content") or "")}
             results.append({"i": i, "action": act, "result": r})
-        elif act in ("goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "shot", "back", "forward", "reload", "scroll", "hover", "pdf", "screenshot", "tab_new", "tab_list", "cookies"):
+        elif act in ("goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "shot", "back", "forward", "reload", "scroll", "hover", "pdf", "screenshot", "tab_new", "tab_list", "cookies", "login"):
             if act == "shot":
                 out = step.get("out") or str(SHOTS / f"run-{i}.png")
                 rc = run_pw("action_shot.py", out, "viewport")
@@ -1271,18 +1294,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                     rest = [step["selector"]]
                 elif act == "fill":
                     rest = [step["selector"], step.get("text") or step.get("value") or step.get("secret_ref") or ""]
-                    resolved, vmeta = _resolve_act_rest("fill", rest)
-                    if resolved is None:
-                        results.append({"i": i, "action": act, "result": vmeta})
-                        continue
-                    rest = resolved
                 elif act == "select":
                     rest = [step["selector"], step.get("value") or step.get("secret_ref") or ""]
-                    resolved, vmeta = _resolve_act_rest("select", rest)
-                    if resolved is None:
-                        results.append({"i": i, "action": act, "result": vmeta})
-                        continue
-                    rest = resolved
+                elif act == "login":
+                    rest = []
+                    if step.get("url"):
+                        rest.append(step["url"])
+                    if step.get("no_submit") or step.get("submit") is False:
+                        rest.append("--no-submit")
                 elif act == "check":
                     rest = [step["selector"]]
                 elif act == "back":
@@ -1558,6 +1577,20 @@ def _gather_snap(
     md_max = min(max_chars, 8000) if fast else max_chars
     tree_cap = min(tree_max, 40000) if fast else tree_max
 
+    cache_key = None
+    if wick_observe_cache is not None:
+        cache_key = wick_observe_cache.cache_key(
+            url=url,
+            fast=bool(fast),
+            wait_ms=wait,
+            session=os.environ.get("WICK_SESSION", "default"),
+            mode="snap",
+        )
+        hit = wick_observe_cache.get(cache_key)
+        if hit and hit.get("ok"):
+            hit["cache"] = True
+            return hit
+
     # Tree first in fast mode: elements + title without waiting on full markdown.
     tree_r = lp_fetch(
         url,
@@ -1587,7 +1620,7 @@ def _gather_snap(
     )
     if not md.get("ok"):
         if tree_r.get("ok"):
-            return {
+            tree_only = {
                 "ok": True,
                 "product": "wick",
                 "version": VERSION,
@@ -1609,6 +1642,9 @@ def _gather_snap(
                 "strip": strips,
                 "tree_only": True,
             }
+            if wick_observe_cache is not None and cache_key:
+                wick_observe_cache.put(cache_key, tree_only)
+            return tree_only
         return md
 
     text = md.get("content") or ""
@@ -1620,7 +1656,7 @@ def _gather_snap(
             if s.startswith("# "):
                 title = s[2:].strip()
                 break
-    return {
+    gathered = {
         "ok": True,
         "product": "wick",
         "version": VERSION,
@@ -1641,6 +1677,9 @@ def _gather_snap(
         "fast": bool(fast),
         "strip": strips,
     }
+    if wick_observe_cache is not None and cache_key:
+        wick_observe_cache.put(cache_key, gathered)
+    return gathered
 
 
 def _annotate_observe(out: dict) -> dict:
@@ -2061,6 +2100,16 @@ def _rpc_handlers() -> dict:
           return wick_vault.list_entries()
       if act == "match":
           return wick_vault.match_url(args.get("url") or "")
+      if act in ("suggest", "autofill"):
+          url = args.get("url") or ""
+          if not url:
+              return {"ok": False, "error": "missing_url"}
+          elements = None
+          if wick_elements is not None:
+              snap = _gather_snap(url, fast=True, elements_limit=40, link_limit=0)
+              if snap.get("ok"):
+                  elements = snap.get("elements") or []
+          return wick_vault.suggest_login(url, elements=elements)
       if act == "init":
           return wick_vault.ensure_local_key(rotate=bool(args.get("rotate")))
       return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
@@ -2356,7 +2405,7 @@ def main() -> int:
         "vault_action",
         nargs="?",
         default="status",
-        choices=["status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen", "resolve"],
+        choices=["status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen", "resolve", "suggest", "autofill"],
     )
     p.add_argument("name", nargs="?", help="entry name (set/get/rm) or ignored")
     p.add_argument("--password", help="password value for set (prefer env WICK_VAULT_SET_PASSWORD)")
@@ -2369,10 +2418,11 @@ def main() -> int:
     p.add_argument("--ref", help="secret ref for resolve (vault://… pass://… env://…)")
     p.add_argument("--length", type=int, default=24, help="password length for gen")
     p.add_argument("--rotate", action="store_true", help="with init: rotate master key (destroys old store usability)")
+    p.add_argument("--allow-subdomains", action="store_true", help="with set: allow app.example.com to use an example.com entry")
     _add_json_only(p)
 
-    p = sub.add_parser("act", help="Chromium interactive action (goto/click/fill/press/wait/eval/content)")
-    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "wait_url", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies"])
+    p = sub.add_parser("act", help="Chromium interactive action (goto/click/fill/press/wait/eval/content/login)")
+    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "wait_url", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies", "login"])
     p.add_argument("rest", nargs="*", help="action args (selector, text|secret-ref, url, ...)")
     _add_json_only(p)
 

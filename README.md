@@ -24,7 +24,7 @@ wick act  click 'role=link[name="More information"]'   # act: hints resolve dire
 | Less RAM than always-on Chrome | Lightpanda ~tens of MB; Chromium on demand |
 | Tracker / ad blocking | EasyList + EasyPrivacy + Fanboy + custom URL blocks |
 | Sessions | Isolated cookie jars + Chromium profiles |
-| Credentials | Open vault + Proton Pass / KeePassXC refs (`docs/VAULT.md`) |
+| Credentials | Origin-bound vault + `wick act login` (Chrome/Brave-style autofill; Proton Pass / KeePassXC refs) |
 | Automation | `act`, multi-tab, PDF, playbooks (`run`) |
 | Cost | **MIT orchestration · no paid API required** |
 
@@ -75,7 +75,9 @@ wick session save myjob
 # Vault (passwords without leaking into agent context)
 wick vault init
 wick vault set mysite --username me --password '…' --url https://example.com/login
-wick act fill 'css=input[type=password]' 'vault://mysite/password'
+wick vault suggest --url https://example.com/login
+wick act login https://example.com/login
+# or: wick act fill 'css=input[type=password]' 'vault://mysite/password'
 
 # Act (Chromium — heavy contact)
 wick act goto URL
@@ -113,7 +115,10 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_SESSION` | `default` | Cookie + Chrome profile name |
 | `WICK_HISTORY` | `1` | JSONL history |
 | `WICK_PROXY` / `HTTPS_PROXY` | — | HTTP(S) proxy (creds never logged) |
-| `WICK_PRIVACY_HEADERS` | `1` | DNT / Sec-GPC |
+| `WICK_PRIVACY_HEADERS` | `1` | DNT / Sec-GPC / Referrer-Policy |
+| `WICK_OBSERVE_CACHE` | `1` | Reuse snap gather for ~8s (plan/ask) |
+| `WICK_VAULT_REQUIRE_ORIGIN` | `1` | Refuse fill for entries with no saved URL |
+| `WICK_ALLOW_PRIVATE` | `0` | Allow localhost / RFC1918 fetches |
 | `WICK_LP_PORT` | `9333` | Lightpanda CDP |
 | `WICK_CHROME_PORT` | `9222` | Chromium CDP |
 
@@ -122,7 +127,7 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 ```
 wick-browser/
   bin/wick           # CLI entrypoint
-  lib/               # daemon, shields, history, chrome actions
+  lib/               # daemon, shields, vault, origins, login_form, chrome actions
   scripts/install.sh
   tests/smoke.sh
   docs/              # agent browser, security, headless, shields
@@ -141,6 +146,7 @@ wick-browser/
 - [docs/SECURITY.md](docs/SECURITY.md) — CDP, shields honesty, proxy, `WICK_HOME`  
 - [docs/HEADLESS.md](docs/HEADLESS.md) — how headless works here  
 - [docs/SHIELDS-AND-ACTIONS.md](docs/SHIELDS-AND-ACTIONS.md) — privacy + act surface  
+- [docs/WICK-0.9.md](docs/WICK-0.9.md) — 0.9 agent login + origin-bound vault  
 - [docs/WICK-0.6.md](docs/WICK-0.6.md) — 0.6.1 release notes  
 - [docs/WICK-0.5.md](docs/WICK-0.5.md) — full command map  
 

@@ -33,3 +33,17 @@ def test_lp_fetch_reports_missing_lightpanda(monkeypatch):
     assert result["ok"] is False
     assert result["error"] == "lightpanda_not_found"
     assert result["product"] == "wick"
+
+
+def test_lp_fetch_rejects_javascript_url(monkeypatch):
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
+    result = wick.lp_fetch("javascript:alert(1)")
+    assert result["ok"] is False
+    assert result["error"] == "dangerous_url"
+
+
+def test_lp_fetch_rejects_private_url_when_blocked(monkeypatch):
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
+    result = wick.lp_fetch("http://127.0.0.1:8080/")
+    assert result["ok"] is False
+    assert result["error"] in ("private_url", "dangerous_url")

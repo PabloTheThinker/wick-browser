@@ -109,7 +109,7 @@ def test_rpc_version_one_shot():
     out = json.loads(proc.stdout.strip())
     assert out["id"] == "t1"
     assert out["ok"] is True
-    assert out["version"] == "0.8.0"
+    assert out["version"] == "0.9.0"
 
 
 def test_observe_security_annotate():

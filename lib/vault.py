@@ -29,7 +29,16 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlparse
+
+try:
+    import origins as wick_origins
+except Exception:
+    wick_origins = None  # type: ignore
+try:
+    import login_form as wick_login_form
+except Exception:
+    wick_login_form = None  # type: ignore
 
 VAULT_FORMAT = "wickvault1"
 DEFAULT_FIELD = "password"
@@ -337,6 +346,42 @@ def list_entries(*, backend: str = "local") -> dict[str, Any]:
     return {"ok": True, "backend": "local", "count": len(items), "entries": items}
 
 
+def totp_at(secret: str, when: int, *, digits: int = 6, period: int = 30) -> str:
+    """RFC 6238 HOTP-SHA1 at a fixed unix time. Secret is base32 or otpauth://."""
+    raw = _totp_secret_bytes(secret)
+    digits = max(6, min(8, int(digits)))
+    period = max(1, int(period))
+    counter = int(when) // period
+    msg = counter.to_bytes(8, "big")
+    digest = hmac.new(raw, msg, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = (
+        ((digest[offset] & 0x7F) << 24)
+        | (digest[offset + 1] << 16)
+        | (digest[offset + 2] << 8)
+        | digest[offset + 3]
+    ) % (10**digits)
+    return f"{code:0{digits}d}"
+
+
+def totp_now(secret: str, *, digits: int = 6, period: int = 30) -> str:
+    return totp_at(secret, int(time.time()), digits=digits, period=period)
+
+
+def _totp_secret_bytes(secret: str) -> bytes:
+    s = (secret or "").strip().replace(" ", "")
+    if s.lower().startswith("otpauth://"):
+        q = parse_qs(urlparse(s).query)
+        s = (q.get("secret") or [""])[0].replace(" ", "")
+        if not s:
+            raise ValueError("otpauth_missing_secret")
+    pad = "=" * ((8 - len(s) % 8) % 8)
+    try:
+        return base64.b32decode(s.upper() + pad, casefold=True)
+    except Exception as e:
+        raise ValueError("bad_totp_secret") from e
+
+
 def set_entry(
     name: str,
     *,
@@ -346,6 +391,7 @@ def set_entry(
     notes: str | None = None,
     fields: dict[str, str] | None = None,
     tags: list[str] | None = None,
+    allow_subdomains: bool | None = None,
 ) -> dict[str, Any]:
     name = (name or "").strip().strip("/")
     if not name or "/" in name and name.count("/") > 3:
@@ -366,6 +412,8 @@ def set_entry(
         ent["notes"] = notes
     if tags is not None:
         ent["tags"] = list(tags)
+    if allow_subdomains is not None:
+        ent["allow_subdomains"] = bool(allow_subdomains)
     if fields:
         for k, v in fields.items():
             if k in ("name",):
@@ -401,41 +449,67 @@ def delete_entry(name: str) -> dict[str, Any]:
     return {"ok": True, "deleted": name}
 
 
+def _entry_has_totp(ent: dict[str, Any]) -> bool:
+    for k in ("totp", "otp_secret", "otpauth"):
+        v = ent.get(k)
+        if isinstance(v, str) and v.strip():
+            return True
+    return False
+
+
+def _entry_totp_secret(ent: dict[str, Any]) -> str | None:
+    for k in ("totp", "otp_secret", "otpauth"):
+        v = ent.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
 def match_url(url: str) -> dict[str, Any]:
-    """Return local entries whose url field is a prefix/host match — metadata only."""
+    """Return local entries whose *origin* matches the page — metadata only.
+
+    Chrome/Brave rule: exact host (plus www alias). HTTPS-saved never matches HTTP.
+    Optional per-entry allow_subdomains (saved parent may fill app.saved).
+    """
     try:
         ensure_local_key()
         store = _read_store()
     except ValueError as e:
         return {"ok": False, "error": str(e)}
-    u = (url or "").strip().lower()
     hits = []
     for name, ent in store.items():
         if not isinstance(ent, dict):
             continue
-        eu = str(ent.get("url") or "").lower()
+        eu = str(ent.get("url") or "")
         if not eu:
             continue
-        if eu in u or u in eu or _host(eu) == _host(u):
-            hits.append(
-                {
-                    "name": name,
-                    "url": ent.get("url"),
-                    "has_username": bool(ent.get("username")),
-                    "has_password": bool(ent.get("password")),
-                    "username_ref": f"vault://{name}/username" if ent.get("username") else None,
-                    "password_ref": f"vault://{name}/password" if ent.get("password") else None,
-                }
-            )
+        allow_sub = bool(ent.get("allow_subdomains"))
+        if wick_origins is None:
+            # Fail closed: never substring-match if origins module is missing.
+            continue
+        ok, reason, score = wick_origins.origins_compatible(
+            eu, url, allow_subdomains=allow_sub
+        )
+        if not ok:
+            continue
+        hits.append(
+            {
+                "name": name,
+                "url": ent.get("url"),
+                "reason": reason,
+                "score": score,
+                "allow_subdomains": allow_sub,
+                "has_username": bool(ent.get("username")),
+                "has_password": bool(ent.get("password")),
+                "has_otp": _entry_has_totp(ent),
+                "username_ref": f"vault://{name}/username" if ent.get("username") else None,
+                "password_ref": f"vault://{name}/password" if ent.get("password") else None,
+                "otp_ref": f"vault://{name}/otp" if _entry_has_totp(ent) else None,
+            }
+        )
+    hits.sort(key=lambda h: (-int(h.get("score") or 0), h.get("name") or ""))
     _audit("match", ref=url[:120], ok=True, detail=f"hits={len(hits)}")
     return {"ok": True, "url": url, "matches": hits, "count": len(hits)}
-
-
-def _host(url: str) -> str:
-    s = url
-    if "://" in s:
-        s = s.split("://", 1)[1]
-    return s.split("/", 1)[0].split(":", 1)[0]
 
 
 def _parse_ref(ref: str) -> tuple[str, str]:
@@ -492,9 +566,16 @@ def _resolve_local(body: str, *, reason: str) -> dict[str, Any]:
             name, field = parts[0], parts[1]
         else:
             raise ValueError("not_found")
-    if field not in ent:
+    if field in ("otp", "totp_code"):
+        secret = _entry_totp_secret(ent)
+        if not secret:
+            raise ValueError("field_missing")
+        val = totp_now(secret)
+        field = "otp"
+    elif field not in ent:
         raise ValueError("field_missing")
-    val = str(ent[field])
+    else:
+        val = str(ent[field])
     _audit("resolve_local", ref=f"vault://{name}/{field}", ok=True, detail=reason[:80])
     return {
         "ok": True,
@@ -639,18 +720,112 @@ def _resolve_kdbx(body: str, *, reason: str) -> dict[str, Any]:
     }
 
 
-def resolve_for_fill(text: str, *, reason: str = "act_fill") -> tuple[str, dict[str, Any]]:
-    """If text is a secret ref, resolve it; else return text unchanged."""
+def resolve_for_fill(
+    text: str,
+    *,
+    reason: str = "act_fill",
+    page_url: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """If text is a secret ref, resolve it; else return text unchanged.
+
+    Local vault refs are origin-bound when page_url is set (Chrome autofill rule).
+    """
     if not is_secret_ref(text):
         return text, {"resolved": False}
     r = resolve(text, reason=reason)
     if not r.get("ok"):
         raise ValueError(r.get("error") or "resolve_failed")
+    origin_ok = True
+    origin_reason = "not_checked"
+    if page_url and r.get("backend") == "local":
+        name = r.get("name")
+        if not name:
+            scheme, body = _parse_ref(r.get("ref") or text)
+            parts = [p for p in body.split("/") if p]
+            name = "/".join(parts[:-1]) if len(parts) > 1 else (parts[0] if parts else "")
+        try:
+            store = _read_store()
+        except ValueError as e:
+            raise ValueError(str(e)) from e
+        ent = store.get(name) if isinstance(store.get(name), dict) else {}
+        saved = (ent or {}).get("url")
+        allow_sub = bool((ent or {}).get("allow_subdomains"))
+        if saved:
+            if wick_origins is None:
+                raise ValueError("origin_mismatch:no_origins_module")
+            origin_ok, origin_reason, _score = wick_origins.origins_compatible(
+                str(saved), page_url, allow_subdomains=allow_sub
+            )
+            if not origin_ok:
+                _audit("resolve_denied", ref=r.get("ref") or text, ok=False, detail=origin_reason)
+                raise ValueError(f"origin_mismatch:{origin_reason}")
+        elif os.environ.get("WICK_VAULT_REQUIRE_ORIGIN", "1") != "0":
+            _audit("resolve_denied", ref=r.get("ref") or text, ok=False, detail="unbound")
+            raise ValueError("origin_unbound")
+        else:
+            origin_reason = "unbound_allowed"
     return str(r["value"]), {
         "resolved": True,
         "backend": r.get("backend"),
         "ref": r.get("ref"),
         "chars": r.get("chars"),
+        "origin_ok": origin_ok,
+        "origin_reason": origin_reason,
+    }
+
+
+def suggest_login(
+    url: str,
+    *,
+    elements: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Agent-safe autofill recipe: refs + selectors, never secret values."""
+    matched = match_url(url)
+    if not matched.get("ok"):
+        return matched
+    form = None
+    if elements is not None and wick_login_form is not None:
+        form = wick_login_form.detect_login_fields(elements)
+    recipe = None
+    hits = matched.get("matches") or []
+    if hits:
+        m = hits[0]
+        cmds = [f"wick act login {url!r}"]
+        user_hint = (form or {}).get("username") or {}
+        pass_hint = (form or {}).get("password") or {}
+        otp_hint = (form or {}).get("otp") or {}
+        if user_hint.get("hint") and m.get("username_ref"):
+            cmds.append(f"wick act fill {user_hint['hint']!r} {m['username_ref']!r}")
+        if pass_hint.get("hint") and m.get("password_ref"):
+            cmds.append(f"wick act fill {pass_hint['hint']!r} {m['password_ref']!r}")
+        if otp_hint.get("hint") and m.get("otp_ref"):
+            cmds.append(f"wick act fill {otp_hint['hint']!r} {m['otp_ref']!r}")
+        recipe = {
+            "name": m.get("name"),
+            "username_ref": m.get("username_ref"),
+            "password_ref": m.get("password_ref"),
+            "otp_ref": m.get("otp_ref"),
+            "username_hint": user_hint.get("hint"),
+            "password_hint": pass_hint.get("hint"),
+            "otp_hint": otp_hint.get("hint"),
+            "submit_hint": ((form or {}).get("submit") or {}).get("hint"),
+            "login_cmd": f"wick act login {url!r}",
+            "cmds": cmds,
+            "reason": m.get("reason"),
+            "score": m.get("score"),
+        }
+    return {
+        "ok": True,
+        "product": "wick",
+        "component": "vault",
+        "mode": "suggest_login",
+        "url": url,
+        "matches": hits,
+        "count": len(hits),
+        "form": form,
+        "recipe": recipe,
+        "revealed": False,
+        "hint": "Secrets stay in the vault. Run recipe.login_cmd or wick act login. Never --reveal.",
     }
 
 

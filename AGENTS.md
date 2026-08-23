@@ -9,7 +9,7 @@ Wick is a **browser for agents** — not a human GUI with an API bolted on.
 1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) 
 2. **`wick plan URL --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
 3. **`wick ask URL --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
-4. **`wick act …`** — Chromium when you must click, type, wait, PDF 
+4. **`wick act …`** — Chromium when you must click, type, wait, PDF. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON).
 5. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
 
 Still available when you need them: `wick elements URL` (dense target list) and `wick open URL --fast` (full markdown, the long read). **`wick observe`** is an alias for **`wick snap`**.
@@ -37,7 +37,7 @@ Each stdin line is one request; stdout is one JSON response:
 {"id": 1, "ok": true, "title": "Example Domain", "untrusted_content": true, ...}
 ```
 
-Known commands: `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
+Known commands: `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
 
 ## Untrusted content (observe outputs)
 
@@ -118,6 +118,16 @@ wick act pdf /tmp/out.pdf
 - **`role=` selectors** — `role=ROLE[name="…"]` hints from `snap` / `plan` / `ask` resolve to Playwright `get_by_role` on `click`, `fill`, and `hover`. CSS/text selectors still work.
 - **`wait_url FRAGMENT [timeout_ms]`** — block until the page URL contains the fragment (default timeout 30000ms). Use after a click that navigates.
 
+## Login (human password-manager path)
+
+```bash
+wick vault set example --username me --url https://example.com/login   # password via WICK_VAULT_SET_PASSWORD
+wick vault suggest --url https://example.com/login                     # refs + form hints, no secrets
+wick act login https://example.com/login                               # origin-bound autofill + submit
+```
+
+Fill is refused on a mismatched origin (phishing page). HTTPS-saved entries never fill on HTTP. `javascript:` / `data:` / private-network URLs are rejected unless `WICK_ALLOW_PRIVATE=1`.
+
 ## Sessions
 
 ```bash
@@ -138,9 +148,10 @@ Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth.
 | `--fast` | `domcontentloaded` + ~1.2s wait (snap/plan/ask/open) |
 | default wait | `open` 1500ms; `snap`/`plan`/`ask` 2000ms |
 | `wick batch` | many URLs one process |
+| observe cache | snap/plan/ask reuse one fetch for ~8s (`WICK_OBSERVE_CACHE=0` to disable) |
 
 ## Playbook
 
-Light actions: `open`, `fetch`, `probe`, `tree`, `links`. Chromium actions: `goto`, `click`, `fill`, `scroll`, `tab_*`, `pdf`, and most of the `act` surface. Unknown actions (`snap_note`, …) record `ok: false` with `soft: true` and **do not** fail the run — use them as in-playbook notes.
+Light actions: `open`, `fetch`, `probe`, `tree`, `links`. Chromium actions: `goto`, `click`, `fill`, `login`, `scroll`, `tab_*`, `pdf`, and most of the `act` surface. Unknown actions (`snap_note`, …) record `ok: false` with `soft: true` and **do not** fail the run — use them as in-playbook notes.
 
 See `examples/README.md`, `examples/playbook.json`, and `examples/agent-loop.json`.

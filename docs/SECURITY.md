@@ -2,16 +2,21 @@
 
 Honest, scoped defaults — not a marketing checklist.
 
-## Password vault (0.8+)
+## Password vault (0.8+, origin-bound in 0.9)
 
 Wick includes an **open-source local vault** plus bridges to Proton Pass CLI, KeePassXC-CLI, and AgentMail-style tokens.
 
 - Secret **refs** (`vault://`, `pass://`, `env://`, `kdbx://`, `agentmail://`) are what agents should see.
-- `wick act fill` resolves refs in-process; responses report `vault.ref` and length, **not** the secret.
+- `wick act fill` / `wick act login` resolve refs in-process against the **live page origin**; responses report `vault.ref` and length, **not** the secret.
+- Origin match is Chrome/Brave-style: exact host (plus `www` alias). Substring URL matching is rejected (phishing). HTTPS-saved logins never fill on HTTP.
 - Store lives under `WICK_HOME/vault` (`0700`); master key `0600` or `WICK_VAULT_KEY`.
 - Audit log records actions with redacted refs only.
 
 See [VAULT.md](VAULT.md). Combine with shields + session isolation for the Brave-inspired stack — still **no** fingerprint farbling claim.
+
+## Fetch / navigation guards (0.9)
+
+Lightpanda `fetch` and Chromium `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost). Override only with `WICK_ALLOW_PRIVATE=1`.
 
 ## Loopback CDP
 

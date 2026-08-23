@@ -29,14 +29,33 @@ wick vault set github --username me --password '…' --url https://github.com/lo
 WICK_VAULT_SET_PASSWORD='…' wick vault set github --username me --url https://github.com/login
 
 wick vault match --url https://github.com/login
+wick vault suggest --url https://github.com/login   # refs + form hints, no secrets
 wick vault get github                    # fields present, no values
 wick vault gen --length 28               # generate (prints once)
 
-# Agent login (secret never in agent JSON response)
+# Agent login — same motion as Chrome/Brave autofill (secret never in JSON)
+wick act login https://github.com/login
+# or manual, still origin-bound to the live page:
 wick act fill 'css=input[name=login]' 'vault://github/username'
 wick act fill 'css=input[name=password]' 'vault://github/password'
 wick act click 'css=button[type=submit]'
 ```
+
+## Origin binding (0.9)
+
+Wick matches credentials the way Chrome and Brave do, not by substring:
+
+| Saved | Page | Autofill |
+|-------|------|----------|
+| `https://example.com/login` | `https://example.com/account` | yes (exact host) |
+| `https://www.example.com/` | `https://example.com/login` | yes (`www` alias) |
+| `https://example.com/` | `http://example.com/` | **no** (HTTPS-saved never fills HTTP) |
+| `https://example.com/` | `https://evil.test/?next=https://example.com/` | **no** (phishing) |
+| `https://example.com/` | `https://app.example.com/` | only if `wick vault set … --allow-subdomains` |
+
+`wick act fill` / `login` resolve refs against the **live page URL**. An unbound entry (no `--url`) is refused unless `WICK_VAULT_REQUIRE_ORIGIN=0`.
+
+TOTP: store a base32 secret or `otpauth://` URL as field `totp`. Agents fill `vault://name/otp` — Wick computes the current code; it is never listed as a stored value.
 
 ## Proton Pass + AgentMail
 
@@ -78,10 +97,10 @@ Together: observe with shields, act in an isolated session, fill only via vault 
 
 ## Agent rules
 
-1. Prefer `wick vault list` / `match` — never `--reveal` in harnesses.
-2. `wick act fill SELECTOR 'vault://…'` — response includes `vault.ref` + `chars`, not the password.
-3. Playbooks: `"secret_ref": "vault://name/password"` or put the ref in `text` / `value`.
-4. RPC: `{"cmd":"vault","args":{"action":"list"}}` for metadata; fill via `act`.
+1. Prefer `wick vault list` / `match` / `suggest` — never `--reveal` in harnesses.
+2. Prefer `wick act login URL` (human autofill). Manual: `wick act fill SELECTOR 'vault://…'` — response includes `vault.ref` + `chars`, not the password.
+3. Playbooks: `{"action":"login","url":"https://example.com/login"}` or `"secret_ref": "vault://name/password"`.
+4. RPC: `{"cmd":"vault","args":{"action":"suggest","url":"https://example.com/login"}}` then `{"cmd":"act","args":{"action":"login","rest":["https://example.com/login"]}}`.
 
 ## Honest limits
 

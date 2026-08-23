@@ -164,6 +164,7 @@ PRIVACY_HEADERS = [
     "DNT: 1",
     "Sec-GPC: 1",
     "Upgrade-Insecure-Requests: 1",
+    "Referrer-Policy: strict-origin-when-cross-origin",
 ]
 
 

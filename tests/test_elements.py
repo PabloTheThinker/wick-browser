@@ -86,6 +86,23 @@ class TestPlanSuggestions(unittest.TestCase):
         clicks = [s for s in plan if s["action"] == "click"]
         self.assertTrue(any("role=link" in (s.get("hint") or "") for s in clicks))
 
+    def test_plan_suggests_login_when_password_form(self):
+        tree = "1 document\n  2 textbox 'Email'\n  3 textbox 'Password'\n  4 [i] button 'Log in'\n"
+        els = elements.parse_tree_text(tree)
+        plan = elements.plan_suggestions(
+            url="https://example.com/login",
+            title="Sign in",
+            excerpt="Sign in to your account",
+            links=[],
+            elements=els,
+            click_limit=2,
+        )
+        actions = {s["action"] for s in plan}
+        self.assertIn("login", actions)
+        login = next(s for s in plan if s["action"] == "login")
+        self.assertIn("wick act login", login["cmd"])
+        self.assertIn("wick vault suggest", login.get("why", "") + login["cmd"])
+
 
 if __name__ == "__main__":
     unittest.main()

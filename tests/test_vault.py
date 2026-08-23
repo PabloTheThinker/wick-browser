@@ -129,12 +129,113 @@ def test_vault_cli_list_no_leak(tmp_path):
 
 def test_tools_include_vault():
     tools_schema = _load_lib("tools_schema")
-    out = tools_schema.tools_export("0.8.0")
+    out = tools_schema.tools_export("0.9.0")
     names = {t["function"]["name"] for t in out["tools"]}
     assert "wick_vault" in names
     assert "wick_act" in names
     # single wick_act
     assert sum(1 for n in names if n == "wick_act") == 1
+    vault_tool = next(t for t in out["tools"] if t["function"]["name"] == "wick_vault")
+    actions = vault_tool["function"]["parameters"]["properties"]["action"]["enum"]
+    assert "suggest" in actions
+    assert "autofill" in actions
+
+
+def test_match_url_rejects_phishing_substring(tmp_path):
+    vault = _load_lib("vault")
+    os.environ["WICK_HOME"] = str(tmp_path / "wickhome")
+    os.environ.pop("WICK_VAULT_KEY", None)
+    os.environ.pop("WICK_VAULT_MASTER", None)
+    vault.ensure_local_key()
+    vault.set_entry(
+        "bank",
+        password="real-secret",
+        username="me",
+        url="https://example.com/login",
+    )
+    phish = vault.match_url("https://evil.test/phish?next=https://example.com/login")
+    assert phish["ok"] is True
+    assert phish["count"] == 0
+    assert "real-secret" not in json.dumps(phish)
+
+    good = vault.match_url("https://example.com/account")
+    assert good["count"] == 1
+    assert good["matches"][0]["name"] == "bank"
+    assert good["matches"][0]["score"] >= 80
+
+
+def test_https_saved_does_not_match_http_page(tmp_path):
+    vault = _load_lib("vault")
+    os.environ["WICK_HOME"] = str(tmp_path / "h")
+    os.environ.pop("WICK_VAULT_KEY", None)
+    os.environ.pop("WICK_VAULT_MASTER", None)
+    vault.ensure_local_key()
+    vault.set_entry("site", password="pw", url="https://example.com/")
+    http_page = vault.match_url("http://example.com/")
+    assert http_page["count"] == 0
+
+
+def test_resolve_for_fill_origin_bound(tmp_path):
+    vault = _load_lib("vault")
+    os.environ["WICK_HOME"] = str(tmp_path / "h")
+    os.environ.pop("WICK_VAULT_KEY", None)
+    os.environ.pop("WICK_VAULT_MASTER", None)
+    vault.ensure_local_key()
+    vault.set_entry("demo", password="s3cret-value-xyz", url="https://example.com/login")
+    val, meta = vault.resolve_for_fill(
+        "vault://demo/password",
+        reason="fill",
+        page_url="https://example.com/login",
+    )
+    assert val == "s3cret-value-xyz"
+    assert meta["origin_ok"] is True
+
+    try:
+        vault.resolve_for_fill(
+            "vault://demo/password",
+            reason="fill",
+            page_url="https://evil.test/",
+        )
+        raise AssertionError("expected origin mismatch")
+    except ValueError as e:
+        assert "origin" in str(e)
+
+
+def test_suggest_login_never_leaks_secret(tmp_path):
+    vault = _load_lib("vault")
+    elements = _load_lib("elements")
+    os.environ["WICK_HOME"] = str(tmp_path / "h")
+    os.environ.pop("WICK_VAULT_KEY", None)
+    os.environ.pop("WICK_VAULT_MASTER", None)
+    vault.ensure_local_key()
+    vault.set_entry(
+        "demo",
+        password="s3cret-value-xyz",
+        username="agent",
+        url="https://example.com/login",
+    )
+    tree = "1 document\n  2 textbox 'Email'\n  3 textbox 'Password'\n  4 [i] button 'Log in'\n"
+    els = elements.parse_tree_text(tree)
+    out = vault.suggest_login("https://example.com/login", elements=els)
+    blob = json.dumps(out)
+    assert out["ok"] is True
+    assert out["count"] >= 1
+    assert "s3cret-value-xyz" not in blob
+    rec = out["recipe"]
+    assert rec["username_ref"] == "vault://demo/username"
+    assert rec["password_ref"] == "vault://demo/password"
+    assert rec["cmds"]
+    assert any("login" in c or "fill" in c for c in rec["cmds"])
+
+
+def test_totp_rfc6238_sha1():
+    vault = _load_lib("vault")
+    # RFC 6238 appendix B: secret ASCII "12345678901234567890"
+    secret_b32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    code = vault.totp_at(secret_b32, when=59, digits=8, period=30)
+    assert code == "94287082"
+    six = vault.totp_at(secret_b32, when=59, digits=6, period=30)
+    assert six == "287082"
 
 
 if __name__ == "__main__":

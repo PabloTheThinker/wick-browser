@@ -19,6 +19,52 @@ ROLE_SEL_RE = re.compile(
     r'^role=([a-zA-Z][\w-]*)(?:\[name=(?:"([^"]*)"|\'([^\']*)\')\])?$'
 )
 
+try:
+    import origins as wick_origins
+except Exception:
+    wick_origins = None  # type: ignore
+try:
+    import vault as wick_vault
+except Exception:
+    wick_vault = None  # type: ignore
+try:
+    import login_form as wick_login_form
+except Exception:
+    wick_login_form = None  # type: ignore
+
+
+def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
+    """Normalize and reject dangerous / private targets (SSRF on Chromium path)."""
+    if wick_origins is None:
+        return url, None
+    if wick_origins.is_dangerous_url(url):
+        return None, {"ok": False, "error": "dangerous_url", "url": (url or "")[:120]}
+    try:
+        normalized = wick_origins.normalize_agent_url(url)
+    except ValueError as e:
+        return None, {"ok": False, "error": str(e), "url": (url or "")[:120]}
+    if wick_origins.is_private_url(normalized) and not wick_origins.allow_private_override():
+        return None, {"ok": False, "error": "private_url", "url": normalized[:120]}
+    return normalized, None
+
+
+def _fill_secret(page, sel: str, text: str) -> tuple[str, dict | None, dict | None]:
+    """Resolve vault refs against the live page origin. Never return the secret in err."""
+    meta = None
+    if wick_vault is not None and wick_vault.is_secret_ref(text):
+        try:
+            text, meta = wick_vault.resolve_for_fill(
+                text, reason="act_fill", page_url=page.url
+            )
+        except ValueError as e:
+            return "", None, {
+                "ok": False,
+                "error": "vault_resolve_failed",
+                "detail": str(e)[:160],
+                "ref": wick_vault._redact_ref(text),
+            }
+    return text, meta, None
+
 
 def connect():
     from playwright.sync_api import sync_playwright
@@ -66,7 +112,10 @@ def main() -> int:
 
     try:
         if action == "goto":
-            url = args[0]
+            url, err = _guard_nav_url(args[0])
+            if err:
+                print(json.dumps(err))
+                return 1
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             try:
                 page.wait_for_load_state("networkidle", timeout=8000)
@@ -81,13 +130,117 @@ def main() -> int:
 
         elif action == "fill":
             sel, text = args[0], args[1]
+            text, vmeta, verr = _fill_secret(page, sel, text)
+            if verr:
+                print(json.dumps(verr))
+                return 1
             resolve_locator(page, sel).fill(text, timeout=15000)
-            print(json.dumps({"ok": True, "filled": sel, "n": len(text)}))
+            out = {"ok": True, "filled": sel, "n": len(text)}
+            if vmeta and vmeta.get("resolved"):
+                out["vault"] = {
+                    k: vmeta[k]
+                    for k in ("ref", "backend", "chars", "origin_ok", "origin_reason")
+                    if k in vmeta
+                }
+            print(json.dumps(out))
 
         elif action == "select":
             sel, value = args[0], args[1]
+            value, vmeta, verr = _fill_secret(page, sel, value)
+            if verr:
+                print(json.dumps(verr))
+                return 1
             page.select_option(sel, value, timeout=15000)
-            print(json.dumps({"ok": True, "selected": sel, "value": value}))
+            out = {"ok": True, "selected": sel}
+            if vmeta and vmeta.get("resolved"):
+                out["vault"] = {
+                    k: vmeta[k]
+                    for k in ("ref", "backend", "chars", "origin_ok")
+                    if k in vmeta
+                }
+            print(json.dumps(out))
+
+        elif action == "login":
+            rest = [a for a in args if a != "--no-submit"]
+            submit = "--no-submit" not in args
+            start_url = rest[0] if rest else None
+            if start_url:
+                start_url, err = _guard_nav_url(start_url)
+                if err:
+                    print(json.dumps(err))
+                    return 1
+                page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception:
+                    pass
+            if wick_vault is None:
+                print(json.dumps({"ok": False, "error": "vault_module_missing"}))
+                return 1
+            matched = wick_vault.match_url(page.url)
+            hits = matched.get("matches") or []
+            if not hits:
+                print(json.dumps({
+                    "ok": False,
+                    "error": "no_vault_match",
+                    "url": page.url,
+                    "hint": "Save an entry with --url matching this origin: wick vault set NAME --url URL --username …",
+                }))
+                return 1
+            m = hits[0]
+            filled: list[str] = []
+            refs: list[str] = []
+            pw_css = wick_login_form.PASSWORD_CSS if wick_login_form else 'input[type="password"]'
+            user_css = wick_login_form.USERNAME_CSS if wick_login_form else 'input[type="email"], input[type="text"]'
+            otp_css = wick_login_form.OTP_CSS if wick_login_form else 'input[autocomplete="one-time-code"]'
+            if m.get("username_ref"):
+                loc = page.locator(user_css).first
+                val, meta = wick_vault.resolve_for_fill(
+                    m["username_ref"], reason="act_login", page_url=page.url
+                )
+                loc.fill(val, timeout=15000)
+                filled.append("username")
+                refs.append(meta.get("ref") or m["username_ref"])
+            if m.get("password_ref"):
+                loc = page.locator(pw_css).first
+                val, meta = wick_vault.resolve_for_fill(
+                    m["password_ref"], reason="act_login", page_url=page.url
+                )
+                loc.fill(val, timeout=15000)
+                filled.append("password")
+                refs.append(meta.get("ref") or m["password_ref"])
+            if m.get("otp_ref"):
+                loc = page.locator(otp_css)
+                if loc.count() > 0:
+                    val, meta = wick_vault.resolve_for_fill(
+                        m["otp_ref"], reason="act_login", page_url=page.url
+                    )
+                    loc.first.fill(val, timeout=15000)
+                    filled.append("otp")
+                    refs.append(meta.get("ref") or m["otp_ref"])
+            submitted = False
+            if submit:
+                try:
+                    page.locator('button[type="submit"], input[type="submit"]').first.click(timeout=4000)
+                    submitted = True
+                except Exception:
+                    try:
+                        page.get_by_role("button", name=re.compile(r"log\s*in|sign\s*in|submit|continue", re.I)).first.click(timeout=4000)
+                        submitted = True
+                    except Exception:
+                        submitted = False
+            print(json.dumps({
+                "ok": True,
+                "action": "login",
+                "url": page.url,
+                "title": page.title(),
+                "filled": filled,
+                "refs": refs,
+                "entry": m.get("name"),
+                "origin_reason": m.get("reason"),
+                "submitted": submitted,
+                "vault": {"revealed": False, "chars": None},
+            }))
 
         elif action == "check":
             page.check(args[0], timeout=15000)

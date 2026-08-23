@@ -3,6 +3,7 @@
   {"action": "snap_note", "note": "Loop before a playbook: wick snap URL --fast -> wick plan URL --fast -> wick ask URL --q 'terms'."},
   {"action": "snap_note", "note": "plan returns suggestions[] with ready-to-run cmd; ask filters links/elements by query words, no LLM."},
   {"action": "snap_note", "note": "Feed role= hints from snap/plan/ask into act steps below, e.g. click selector role=link[name=\"More information\"]."},
+  {"action": "snap_note", "note": "For logins: wick vault suggest --url URL then wick act login URL. Fill is origin-bound; secrets never appear in JSON."},
   {"action": "open", "url": "https://example.com/", "max": 2000},
   {"action": "goto", "url": "https://example.com/"},
   {"action": "scroll", "direction": "down", "amount": 600},
