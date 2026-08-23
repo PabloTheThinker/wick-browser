@@ -1192,6 +1192,30 @@ def cmd_vault(args: argparse.Namespace) -> int:
     if act == "match":
         print(json.dumps(wick_vault.match_url(getattr(args, "url", "") or ""), ensure_ascii=False))
         return 0
+    if act == "unlock":
+        out = wick_vault.unlock(getattr(args, "ttl", None))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "lock":
+        out = wick_vault.lock()
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "grant":
+        url = getattr(args, "url", None) or getattr(args, "name", None) or ""
+        if not url:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_url",
+                        "hint": "wick vault grant --url https://example.com/login [--ttl 120]",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.grant(url, ttl=int(getattr(args, "ttl", None) or 120))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     if act == "set":
         fields = {}
         raw_fields = getattr(args, "field", None) or []
@@ -2420,6 +2444,15 @@ def _rpc_handlers() -> dict:
           return wick_vault.suggest_login(url, elements=elements)
       if act == "init":
           return wick_vault.ensure_local_key(rotate=bool(args.get("rotate")))
+      if act == "unlock":
+          return wick_vault.unlock(args.get("ttl"))
+      if act == "lock":
+          return wick_vault.lock()
+      if act == "grant":
+          url = args.get("url") or ""
+          if not url:
+              return {"ok": False, "error": "missing_url"}
+          return wick_vault.grant(url, ttl=int(args.get("ttl") or 120))
       return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
 
   def _session(args: dict) -> dict:
@@ -2763,7 +2796,10 @@ def main() -> int:
         "vault_action",
         nargs="?",
         default="status",
-        choices=["status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen", "resolve", "suggest", "autofill"],
+        choices=[
+            "status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen",
+            "resolve", "suggest", "autofill", "lock", "unlock", "grant",
+        ],
     )
     p.add_argument("name", nargs="?", help="entry name (set/get/rm) or ignored")
     p.add_argument("--password", help="password value for set (prefer env WICK_VAULT_SET_PASSWORD)")
@@ -2776,6 +2812,7 @@ def main() -> int:
     p.add_argument("--ref", help="secret ref for resolve (vault://… pass://… env://…)")
     p.add_argument("--length", type=int, default=24, help="password length for gen")
     p.add_argument("--rotate", action="store_true", help="with init: rotate master key (destroys old store usability)")
+    p.add_argument("--ttl", type=int, help="seconds for unlock (default 900) or grant (default 120)")
     p.add_argument("--allow-subdomains", action="store_true", help="with set: allow app.example.com to use an example.com entry")
     _add_json_only(p)
 

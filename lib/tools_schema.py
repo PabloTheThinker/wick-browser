@@ -214,18 +214,34 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_vault",
-        "Password vault status/list/match/suggest (metadata only). suggest/autofill returns origin-bound refs and login cmds — never secrets. Fill via wick_act login or fill with vault:// refs.",
+        "Password vault status/list/match/suggest (metadata only) plus the unlock/lock/grant broker. suggest/autofill returns origin-bound refs and login cmds — never secrets. Fill via wick_act login or fill with vault:// refs.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "backends", "doctor", "list", "match", "suggest", "autofill", "init"],
-                    "description": "Metadata actions only. Never request reveal. Use suggest then wick_act login.",
+                    "enum": [
+                        "status",
+                        "backends",
+                        "doctor",
+                        "list",
+                        "match",
+                        "suggest",
+                        "autofill",
+                        "init",
+                        "unlock",
+                        "lock",
+                        "grant",
+                    ],
+                    "description": "Metadata actions only; never request reveal. unlock/lock/grant need WICK_PROFILE=full-act: grant scopes resolve/fill to one origin, lock drops the session and its grants.",
                 },
                 "url": {
                     "type": "string",
-                    "description": "URL for match (find entries by site).",
+                    "description": "URL for match (find entries by site) or grant (origin to allow).",
+                },
+                "ttl": {
+                    "type": "integer",
+                    "description": "Seconds for unlock (default 900) or grant (default 120).",
                 },
             },
             "required": ["action"],

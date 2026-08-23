@@ -5,6 +5,9 @@ Design (security-first for agents):
 - Secrets never appear in list/status/match/doctor JSON.
 - Agents pass *refs* (vault://…, pass://…, env://…, kdbx://…); only the fill path resolves.
 - Local backend is open-source, file-based under WICK_HOME/vault (mode 0700).
+- Local crypto is wickvault2: AES-256-GCM with HKDF-SHA256 wrap key → vault key →
+  per-item key (see lib/vault_crypto.py and docs/VAULT-CRYPTO.md). wickvault1
+  (SHA-256 XOR stream) is read-only and migrates on the next write.
 - Proton Pass uses official pass-cli agent tokens (scoped + audited by Proton).
 - AgentMail / proton-agent-mail tokens are stored as ordinary entries (never in git).
 
@@ -31,16 +34,40 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-try:
-    import origins as wick_origins
-except Exception:
-    wick_origins = None  # type: ignore
-try:
-    import login_form as wick_login_form
-except Exception:
-    wick_login_form = None  # type: ignore
+def _sibling_module(name: str) -> Any:
+    """Import a lib/ sibling whether or not lib/ is on sys.path."""
+    try:
+        return __import__(name)
+    except Exception:
+        pass
+    try:
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
 
-VAULT_FORMAT = "wickvault1"
+        path = Path(__file__).resolve().parent / f"{name}.py"
+        if not path.is_file():
+            return None
+        loader = SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+wick_origins = _sibling_module("origins")
+wick_login_form = _sibling_module("login_form")
+vcrypto = _sibling_module("vault_crypto")
+
+VAULT_FORMAT = "wickvault2"
+LEGACY_VAULT_FORMAT = "wickvault1"
+DEFAULT_LOCK_TTL = 900
+DEFAULT_GRANT_TTL = 120
+MAX_UNLOCK_FAILURES = 8
+FAILURE_COOLDOWN_S = 30
 DEFAULT_FIELD = "password"
 REF_RE = re.compile(
     r"^(?P<scheme>vault|pass|env|kdbx|agentmail)://(?P<body>.+)$",
@@ -73,6 +100,7 @@ def _paths() -> dict[str, Path]:
         "meta": root / "meta.json",
         "audit": root / "audit.jsonl",
         "config": root / "config.json",
+        "session": root / "session.json",
     }
 
 
@@ -126,6 +154,12 @@ def _b64d(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + pad)
 
 
+# --------------------------------------------------------------------------
+# wickvault1 (legacy, read + migrate only)
+#
+# SHA-256 counter XOR + HMAC. Kept so an existing store can be opened once and
+# rewritten as wickvault2. Nothing on the write path calls _seal().
+# --------------------------------------------------------------------------
 def _derive_key(master: bytes, salt: bytes) -> bytes:
     return hashlib.scrypt(master, salt=salt, n=2**14, r=8, p=1, dklen=32)
 
@@ -141,17 +175,18 @@ def _keystream(key: bytes, nonce: bytes, length: int) -> bytes:
 
 
 def _seal(master: bytes, plaintext: bytes) -> str:
+    """Legacy wickvault1 writer — migration fixtures and tests only."""
     salt = secrets.token_bytes(16)
     nonce = secrets.token_bytes(16)
     key = _derive_key(master, salt)
     ct = bytes(a ^ b for a, b in zip(plaintext, _keystream(key, nonce, len(plaintext))))
     mac = hmac.new(key, salt + nonce + ct, hashlib.sha256).digest()
-    return "$".join([VAULT_FORMAT, _b64e(salt), _b64e(nonce), _b64e(ct), _b64e(mac)])
+    return "$".join([LEGACY_VAULT_FORMAT, _b64e(salt), _b64e(nonce), _b64e(ct), _b64e(mac)])
 
 
 def _open_seal(master: bytes, blob: str) -> bytes:
     parts = blob.strip().split("$")
-    if len(parts) != 5 or parts[0] != VAULT_FORMAT:
+    if len(parts) != 5 or parts[0] != LEGACY_VAULT_FORMAT:
         raise ValueError("bad_vault_format")
     _, salt_b, nonce_b, ct_b, mac_b = parts
     salt, nonce, ct, mac = _b64d(salt_b), _b64d(nonce_b), _b64d(ct_b), _b64d(mac_b)
@@ -162,7 +197,25 @@ def _open_seal(master: bytes, blob: str) -> bytes:
     return bytes(a ^ b for a, b in zip(ct, _keystream(key, nonce, len(ct))))
 
 
+# --------------------------------------------------------------------------
+# wickvault2 — AES-256-GCM with wrap -> vault -> item keys
+# --------------------------------------------------------------------------
+def _now() -> int:
+    return int(time.time())
+
+
+def _iso(when: int | None = None) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(when if when is not None else _now()))
+
+
+def _require_crypto() -> Any:
+    if vcrypto is None or not vcrypto.available():
+        raise ValueError("aead_unavailable")
+    return vcrypto
+
+
 def _load_master() -> bytes | None:
+    """File/env key material. Never used raw as an AES key — HKDF stretches it."""
     env = os.environ.get("WICK_VAULT_KEY") or os.environ.get("WICK_VAULT_MASTER")
     if env:
         return env.encode("utf-8")
@@ -172,58 +225,609 @@ def _load_master() -> bytes | None:
     return None
 
 
+def _passphrase() -> str | None:
+    """WICK_VAULT_PASSPHRASE — never logged, never audited, never returned."""
+    pw = os.environ.get("WICK_VAULT_PASSPHRASE")
+    return pw if pw else None
+
+
+def _lock_ttl() -> int:
+    raw = (os.environ.get("WICK_VAULT_LOCK_TTL") or "").strip()
+    try:
+        ttl = int(raw) if raw else DEFAULT_LOCK_TTL
+    except ValueError:
+        ttl = DEFAULT_LOCK_TTL
+    return max(10, min(86400, ttl))
+
+
+def store_format() -> str:
+    """On-disk format without decrypting: wickvault2 | wickvault1 | none."""
+    path = _paths()["store"]
+    if not path.is_file():
+        return "none"
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "none"
+    if not raw:
+        return "none"
+    if raw.startswith(LEGACY_VAULT_FORMAT + "$"):
+        return LEGACY_VAULT_FORMAT
+    try:
+        obj = json.loads(raw)
+    except ValueError:
+        return "unknown"
+    if isinstance(obj, dict) and obj.get("format") == VAULT_FORMAT:
+        return VAULT_FORMAT
+    return "unknown"
+
+
+def _read_doc() -> dict[str, Any] | None:
+    """Parsed wickvault2 document, or None for legacy/absent/unreadable stores."""
+    path = _paths()["store"]
+    if not path.is_file():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw or raw.startswith(LEGACY_VAULT_FORMAT + "$"):
+        return None
+    try:
+        obj = json.loads(raw)
+    except ValueError:
+        return None
+    if isinstance(obj, dict) and obj.get("format") == VAULT_FORMAT:
+        return obj
+    return None
+
+
+def _read_header() -> dict[str, Any] | None:
+    doc = _read_doc()
+    if doc is None:
+        return None
+    return {k: doc[k] for k in ("format", "aead", "kdf", "kdf_params", "salt", "wrapped_vault_key") if k in doc}
+
+
+def _planned_kdf() -> str:
+    """KDF a brand-new store would use on this host."""
+    if _passphrase() is not None and _load_master() is None:
+        return vcrypto.passphrase_kdf_name() if vcrypto is not None else "scrypt"
+    return "filekey"
+
+
+def kdf_mode() -> str:
+    """'filekey' or the passphrase KDF name for the current store."""
+    header = _read_header()
+    if header and header.get("kdf"):
+        return str(header["kdf"])
+    return _planned_kdf()
+
+
+def _read_meta() -> dict[str, Any]:
+    p = _paths()["meta"]
+    if not p.is_file():
+        return {}
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _write_meta(meta: dict[str, Any]) -> None:
+    p = _paths()["meta"]
+    try:
+        p.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+
+
+def _check_cooldown() -> None:
+    """Refuse briefly after repeated bad unwraps. Counter only — no secrets."""
+    meta = _read_meta()
+    fails = int(meta.get("unwrap_failures") or 0)
+    if fails < MAX_UNLOCK_FAILURES:
+        return
+    last = int(meta.get("unwrap_failed_at") or 0)
+    if _now() - last < FAILURE_COOLDOWN_S:
+        raise ValueError("vault_locked_cooldown")
+    meta["unwrap_failures"] = 0
+    _write_meta(meta)
+
+
+def _note_failure() -> None:
+    meta = _read_meta()
+    meta["unwrap_failures"] = int(meta.get("unwrap_failures") or 0) + 1
+    meta["unwrap_failed_at"] = _now()
+    _write_meta(meta)
+
+
+def _clear_failures() -> None:
+    meta = _read_meta()
+    if meta.get("unwrap_failures"):
+        meta["unwrap_failures"] = 0
+        _write_meta(meta)
+
+
+def _entry_origin(ent: dict[str, Any]) -> str:
+    """Saved origin for the blob AAD ('' when the entry is unbound)."""
+    url = str((ent or {}).get("url") or "").strip()
+    if not url or wick_origins is None:
+        return ""
+    parsed = wick_origins.parse_origin(url)
+    return str((parsed or {}).get("origin") or "")
+
+
+def _wrap_key_from_header(header: dict[str, Any]) -> bytes:
+    crypto = _require_crypto()
+    kdf = str(header.get("kdf") or "filekey")
+    salt = _b64d(str(header.get("salt") or ""))
+    if not salt:
+        raise ValueError("corrupt_store")
+    if kdf == "filekey":
+        master = _load_master()
+        if master is None:
+            raise ValueError("vault_locked")
+        return crypto.derive_wrap_key(master, salt)
+    pw = _passphrase()
+    if pw is None:
+        raise ValueError("vault_locked")
+    params = header.get("kdf_params") if isinstance(header.get("kdf_params"), dict) else {}
+    stretched, _name, _params = crypto.passphrase_key(pw, salt, kdf=kdf, params=params)
+    return crypto.derive_wrap_key(stretched, salt)
+
+
+def _open_vault_key(header: dict[str, Any]) -> bytes:
+    """Unwrap the vault key from the store header (or an unexpired session)."""
+    crypto = _require_crypto()
+    _check_cooldown()
+    kdf = str(header.get("kdf") or "filekey")
+    if kdf != "filekey" and _passphrase() is None:
+        from_session = _session_vault_key()
+        if from_session is not None:
+            return from_session
+    try:
+        wrap = _wrap_key_from_header(header)
+        vault_key = crypto.open_sealed(wrap, header.get("wrapped_vault_key"), crypto.aad_vault_key())
+    except ValueError as e:
+        if str(e) == "bad_mac_or_key":
+            _note_failure()
+        raise
+    _clear_failures()
+    return vault_key
+
+
+def _new_header() -> tuple[dict[str, Any], bytes]:
+    """Fresh salt + vault key. Passphrase mode when WICK_VAULT_PASSPHRASE is set."""
+    crypto = _require_crypto()
+    salt = crypto.random_salt()
+    pw = _passphrase()
+    if pw is not None and _load_master() is None:
+        material, kdf, params = crypto.passphrase_key(pw, salt)
+    else:
+        master = _load_master()
+        if master is None:
+            raise ValueError("vault_locked")
+        material, kdf, params = master, "filekey", {}
+    wrap = crypto.derive_wrap_key(material, salt)
+    vault_key = crypto.random_key()
+    header = {
+        "format": VAULT_FORMAT,
+        "aead": crypto.AEAD,
+        "kdf": kdf,
+        "kdf_params": dict(params),
+        "salt": _b64e(salt),
+        "wrapped_vault_key": crypto.seal(wrap, vault_key, crypto.aad_vault_key()),
+    }
+    return header, vault_key
+
+
+def _seal_item(vault_key: bytes, name: str, ent: dict[str, Any]) -> dict[str, Any]:
+    """Per-item key wrapped by the vault key; blob bound to name + saved origin."""
+    crypto = _require_crypto()
+    item_key = crypto.random_key()
+    origin = _entry_origin(ent)
+    blob = json.dumps(ent, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return {
+        "wrapped_item_key": crypto.seal(vault_key, item_key, crypto.aad_item_key(name)),
+        "origin": crypto.seal(item_key, origin.encode("utf-8"), crypto.aad_item_origin(name)),
+        "blob": crypto.seal(item_key, blob, crypto.aad_blob(name, origin)),
+        "updated": str(ent.get("updated") or _iso()),
+    }
+
+
+def _open_item(vault_key: bytes, name: str, rec: dict[str, Any]) -> dict[str, Any]:
+    crypto = _require_crypto()
+    if not isinstance(rec, dict):
+        raise ValueError("corrupt_store")
+    item_key = crypto.open_sealed(vault_key, rec.get("wrapped_item_key"), crypto.aad_item_key(name))
+    origin = ""
+    if rec.get("origin"):
+        origin = crypto.open_sealed(item_key, rec.get("origin"), crypto.aad_item_origin(name)).decode("utf-8")
+    raw = crypto.open_sealed(item_key, rec.get("blob"), crypto.aad_blob(name, origin))
+    try:
+        ent = json.loads(raw.decode("utf-8"))
+    except ValueError as e:
+        raise ValueError("corrupt_store") from e
+    if not isinstance(ent, dict):
+        raise ValueError("corrupt_store")
+    if rec.get("updated") and not ent.get("updated"):
+        ent["updated"] = str(rec["updated"])
+    return ent
+
+
 def ensure_local_key(*, rotate: bool = False) -> dict[str, Any]:
-    """Create master.key (0600) if missing. Never prints the key."""
+    """Create master.key (0600) if missing. Never prints the key.
+
+    Passphrase mode (WICK_VAULT_PASSPHRASE with no existing key file) writes no
+    key material to disk — the wrap key is derived on each use.
+    """
     paths = _paths()
     key_path = paths["key"]
     created = False
-    if rotate or not key_path.is_file():
+    passphrase_mode = kdf_mode() != "filekey"
+    if not passphrase_mode and (rotate or not key_path.is_file()):
         key = secrets.token_bytes(32)
         key_path.write_bytes(key)
         os.chmod(key_path, 0o600)
         created = True
-        _audit("key_create" if created else "key_rotate", ok=True)
-    meta = {
-        "format": VAULT_FORMAT,
-        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "backend": "local",
-    }
+        _audit("key_rotate" if rotate else "key_create", ok=True)
+    meta = _read_meta()
     if not paths["meta"].is_file() or created:
-        paths["meta"].write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-        os.chmod(paths["meta"], 0o600)
+        meta.update(
+            {
+                "format": VAULT_FORMAT,
+                "aead": vcrypto.AEAD if vcrypto is not None else "unavailable",
+                "created": _iso(),
+                "backend": "local",
+            }
+        )
+        _write_meta(meta)
     if not paths["store"].is_file():
         _write_store({})
-    return {"ok": True, "created": created, "key_path": str(key_path), "mode": "0600"}
+    return {
+        "ok": True,
+        "created": created,
+        "key_path": str(key_path) if not passphrase_mode else None,
+        "mode": "passphrase" if passphrase_mode else "0600",
+        "format": store_format() if store_format() != "none" else VAULT_FORMAT,
+        "kdf": kdf_mode(),
+        "aead": vcrypto.AEAD if vcrypto is not None else "unavailable",
+    }
 
 
 def _read_store() -> dict[str, Any]:
+    """Decrypt the store into {name: entry-dict}. Opens wickvault1 for migration."""
+    store_path = _paths()["store"]
+    raw = ""
+    if store_path.is_file():
+        try:
+            raw = store_path.read_text(encoding="utf-8").strip()
+        except OSError as e:
+            raise ValueError("corrupt_store") from e
+    if not raw:
+        if _load_master() is None and _passphrase() is None and _session_vault_key() is None:
+            raise ValueError("vault_locked")
+        return {}
+    if raw.startswith(LEGACY_VAULT_FORMAT + "$"):
+        return _read_store_legacy(raw)
+    try:
+        doc = json.loads(raw)
+    except ValueError as e:
+        raise ValueError("corrupt_store") from e
+    if not isinstance(doc, dict) or doc.get("format") != VAULT_FORMAT:
+        raise ValueError("bad_vault_format")
+    _require_crypto()
+    vault_key = _open_vault_key(doc)
+    items = doc.get("items")
+    if not isinstance(items, dict):
+        raise ValueError("corrupt_store")
+    entries: dict[str, Any] = {}
+    try:
+        for name, rec in items.items():
+            entries[str(name)] = _open_item(vault_key, str(name), rec)
+    except ValueError as e:
+        if str(e) == "bad_mac_or_key":
+            _note_failure()
+        raise
+    return entries
+
+
+def _read_store_legacy(raw: str) -> dict[str, Any]:
     master = _load_master()
     if master is None:
         raise ValueError("vault_locked")
-    store_path = _paths()["store"]
-    if not store_path.is_file():
-        return {}
-    raw = store_path.read_text(encoding="utf-8").strip()
-    if not raw:
-        return {}
-    data = _open_seal(master, raw)
-    obj = json.loads(data.decode("utf-8"))
+    _check_cooldown()
+    try:
+        data = _open_seal(master, raw)
+    except ValueError as e:
+        if str(e) == "bad_mac_or_key":
+            _note_failure()
+        raise
+    try:
+        obj = json.loads(data.decode("utf-8"))
+    except ValueError as e:
+        raise ValueError("corrupt_store") from e
     if not isinstance(obj, dict):
         raise ValueError("corrupt_store")
+    _clear_failures()
     return obj
 
 
 def _write_store(entries: dict[str, Any]) -> None:
-    master = _load_master()
-    if master is None:
-        raise ValueError("vault_locked")
-    blob = _seal(master, json.dumps(entries, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    """Always writes wickvault2. Reuses the existing vault key when openable."""
+    crypto = _require_crypto()
+    header: dict[str, Any] | None = None
+    vault_key: bytes | None = None
+    doc = _read_doc()
+    if doc is not None:
+        try:
+            vault_key = _open_vault_key(doc)
+            header = _read_header()
+        except ValueError:
+            header, vault_key = None, None
+    if header is None or vault_key is None:
+        header, vault_key = _new_header()
+    items: dict[str, Any] = {}
+    for name, ent in entries.items():
+        if not isinstance(ent, dict):
+            continue
+        items[str(name)] = _seal_item(vault_key, str(name), ent)
+    out = dict(header)
+    out["aead"] = crypto.AEAD
+    out["items"] = items
     path = _paths()["store"]
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(blob + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(out, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(tmp, 0o600)
     tmp.replace(path)
     os.chmod(path, 0o600)
+
+
+# --------------------------------------------------------------------------
+# Session broker: unlock / lock / origin grants
+# --------------------------------------------------------------------------
+def _read_session() -> dict[str, Any] | None:
+    p = _paths()["session"]
+    if not p.is_file():
+        return None
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if int(obj.get("exp") or 0) <= _now():
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        return None
+    return obj
+
+
+def _write_session(sess: dict[str, Any]) -> None:
+    p = _paths()["session"]
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(sess, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(p)
+    os.chmod(p, 0o600)
+
+
+def _session_vault_key() -> bytes | None:
+    """Vault key held by an unexpired passphrase-mode session, if any."""
+    if vcrypto is None or not vcrypto.available():
+        return None
+    sess = _read_session()
+    if not sess:
+        return None
+    sk = sess.get("session_key")
+    wrapped = sess.get("wrapped_vault_key")
+    if not isinstance(sk, str) or not isinstance(wrapped, dict):
+        return None
+    try:
+        return vcrypto.open_sealed(_b64d(sk), wrapped, vcrypto.aad_session())
+    except ValueError:
+        return None
+
+
+def _active_grants() -> list[dict[str, Any]]:
+    sess = _read_session()
+    if not sess:
+        return []
+    now = _now()
+    out = []
+    for g in sess.get("grants") or []:
+        if isinstance(g, dict) and str(g.get("origin") or "") and int(g.get("exp") or 0) > now:
+            out.append(g)
+    return out
+
+
+def _grant_allows(url: str | None) -> tuple[bool, str]:
+    """True when no grants are active, or one covers this URL."""
+    grants = _active_grants()
+    if not grants:
+        return True, "no_grants"
+    u = (url or "").strip()
+    if not u:
+        return False, "no_url"
+    if wick_origins is None:
+        return False, "no_origins_module"
+    for g in grants:
+        ok, reason, _score = wick_origins.origins_compatible(
+            str(g.get("origin") or ""), u, allow_subdomains=False
+        )
+        if ok:
+            return True, reason
+    return False, "not_granted"
+
+
+def unlock(ttl: int | None = None) -> dict[str, Any]:
+    """Verify the vault key opens and write a TTL-limited session (0600)."""
+    if ttl is None:
+        seconds = _lock_ttl()
+    else:
+        try:
+            seconds = int(ttl)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "bad_ttl"}
+        if seconds <= 0:
+            return {"ok": False, "error": "bad_ttl"}
+    seconds = min(86400, seconds)
+    try:
+        ensure_local_key()
+        header = _read_header()
+        vault_key: bytes | None = None
+        if header is not None:
+            vault_key = _open_vault_key(header)
+        else:
+            _read_store()
+    except ValueError as e:
+        _audit("unlock", ok=False, detail=str(e))
+        return {"ok": False, "error": str(e)}
+    kdf = str((header or {}).get("kdf") or kdf_mode())
+    mode = "filekey" if kdf == "filekey" else "passphrase"
+    exp = _now() + seconds
+    sess: dict[str, Any] = {
+        "exp": exp,
+        "mode": mode,
+        "kdf": kdf,
+        "grants": [],
+        "created": _iso(),
+    }
+    note = None
+    if mode == "passphrase" and vault_key is not None and vcrypto is not None:
+        session_key = vcrypto.random_key()
+        sess["session_key"] = _b64e(session_key)
+        sess["wrapped_vault_key"] = vcrypto.seal(session_key, vault_key, vcrypto.aad_session())
+        note = "session key lives in this 0600 file until exp — TTL convenience, not a hardware keystore"
+        sess["note"] = note
+    _write_session(sess)
+    _audit("unlock", ok=True, detail=f"mode={mode} ttl={seconds}")
+    return {
+        "ok": True,
+        "unlocked": True,
+        "mode": mode,
+        "kdf": kdf,
+        "ttl": seconds,
+        "exp": exp,
+        "expires": _iso(exp),
+        "grants": 0,
+        "session": str(_paths()["session"]),
+        "note": note,
+    }
+
+
+def lock() -> dict[str, Any]:
+    """Delete the session (and any origin grants with it)."""
+    p = _paths()["session"]
+    grants = len(_active_grants())
+    existed = p.is_file()
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        existed = False
+    except OSError as e:
+        return {"ok": False, "error": "session_unlink_failed", "detail": str(e)[:80]}
+    mode = "filekey" if kdf_mode() == "filekey" else "passphrase"
+    _audit("lock", ok=True, detail=f"mode={mode} grants={grants}")
+    return {
+        "ok": True,
+        "locked": True,
+        "session_cleared": existed,
+        "grants_cleared": grants,
+        "mode": mode,
+        "note": (
+            "file-key mode stays readable while master.key exists — lock clears grants/session only"
+            if mode == "filekey"
+            else "passphrase mode: resolve now needs WICK_VAULT_PASSPHRASE or a new unlock"
+        ),
+    }
+
+
+def grant(url: str, ttl: int | None = DEFAULT_GRANT_TTL) -> dict[str, Any]:
+    """Allow resolve/fill for one origin until TTL. Other origins are denied."""
+    u = (url or "").strip()
+    if not u:
+        return {"ok": False, "error": "missing_url", "hint": "wick vault grant --url https://example.com/login"}
+    if wick_origins is None:
+        return {"ok": False, "error": "no_origins_module"}
+    parsed = wick_origins.parse_origin(u)
+    origin = str((parsed or {}).get("origin") or "")
+    if not origin:
+        return {"ok": False, "error": "bad_url"}
+    if ttl is None:
+        seconds = DEFAULT_GRANT_TTL
+    else:
+        try:
+            seconds = int(ttl)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "bad_ttl"}
+        if seconds <= 0:
+            return {"ok": False, "error": "bad_ttl"}
+    seconds = min(86400, seconds)
+    sess = _read_session()
+    if sess is None:
+        opened = unlock()
+        if not opened.get("ok"):
+            return opened
+        sess = _read_session() or {}
+    exp = _now() + seconds
+    grants = [g for g in _active_grants() if str(g.get("origin")) != origin]
+    grants.append({"origin": origin, "exp": exp})
+    sess["grants"] = grants
+    if int(sess.get("exp") or 0) < exp:
+        sess["exp"] = exp
+    _write_session(sess)
+    _audit("grant", ref=origin, ok=True, detail=f"ttl={seconds}")
+    return {
+        "ok": True,
+        "granted": origin,
+        "ttl": seconds,
+        "exp": exp,
+        "expires": _iso(exp),
+        "grants": [{"origin": str(g.get("origin")), "expires": _iso(int(g.get("exp") or 0))} for g in grants],
+        "note": "while a grant is active, local resolve/fill is denied for every other origin",
+    }
+
+
+def session_status() -> dict[str, Any]:
+    """Session + grant metadata. Never includes key material."""
+    sess = _read_session()
+    grants = _active_grants()
+    mode = "filekey" if kdf_mode() == "filekey" else "passphrase"
+    unlocked = bool(_load_master()) or _passphrase() is not None or _session_vault_key() is not None
+    return {
+        "active": bool(sess),
+        "mode": mode,
+        "exp": int((sess or {}).get("exp") or 0) or None,
+        "expires": _iso(int(sess["exp"])) if sess and sess.get("exp") else None,
+        "unlocked": unlocked,
+        "grants": [{"origin": str(g.get("origin")), "expires": _iso(int(g.get("exp") or 0))} for g in grants],
+        "grant_count": len(grants),
+        "relock_after_fill": os.environ.get("WICK_VAULT_RELOCK_AFTER_FILL") == "1",
+        "lock_ttl": _lock_ttl(),
+    }
+
+
+def crypto_info() -> dict[str, Any]:
+    """Format/AEAD/KDF/hierarchy for status + doctor. No secrets."""
+    fmt = store_format()
+    return {
+        "format": fmt if fmt not in ("none", "unknown") else VAULT_FORMAT,
+        "store_format": fmt,
+        "aead": vcrypto.AEAD if vcrypto is not None else "unavailable",
+        "kdf": kdf_mode(),
+        "hierarchy": vcrypto.HIERARCHY if vcrypto is not None else "wrap→vault→item",
+        "aead_available": bool(vcrypto is not None and vcrypto.available()),
+        "argon2_available": bool(vcrypto is not None and vcrypto.HAVE_ARGON2),
+        "legacy_read_only": LEGACY_VAULT_FORMAT,
+        "migrate_on_write": fmt == LEGACY_VAULT_FORMAT,
+        "audited": False,
+    }
 
 
 def load_config() -> dict[str, Any]:
@@ -257,6 +861,8 @@ def save_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
 def backends_status() -> dict[str, Any]:
     cfg = load_config()
+    info = crypto_info()
+    sess = session_status()
     local_key = _paths()["key"].is_file() or bool(os.environ.get("WICK_VAULT_KEY"))
     store = _paths()["store"].is_file()
     pp_bin = (cfg.get("proton_pass") or {}).get("bin") or "pass-cli"
@@ -270,11 +876,18 @@ def backends_status() -> dict[str, Any]:
         "component": "vault",
         "local": {
             "available": True,
-            "unlocked": bool(local_key),
+            "unlocked": bool(sess.get("unlocked")),
             "store": store,
             "path": str(_paths()["root"]),
             "open_source": True,
-            "format": VAULT_FORMAT,
+            "format": info["format"],
+            "aead": info["aead"],
+            "kdf": info["kdf"],
+            "hierarchy": info["hierarchy"],
+            "key_file": bool(local_key),
+            "migrate_on_write": info["migrate_on_write"],
+            "session": sess,
+            "not_claimed": "no Proton cloud sync, no third-party audit, no HSM",
         },
         "proton_pass": {
             "available": bool(pp_path),
@@ -566,6 +1179,11 @@ def _resolve_local(body: str, *, reason: str) -> dict[str, Any]:
             name, field = parts[0], parts[1]
         else:
             raise ValueError("not_found")
+    if _active_grants():
+        allowed, why = _grant_allows(str(ent.get("url") or ""))
+        if not allowed:
+            _audit("resolve_denied", ref=f"vault://{name}/{field}", ok=False, detail=f"grant:{why}")
+            raise ValueError(f"grant_required:{why}")
     if field in ("otp", "totp_code"):
         secret = _entry_totp_secret(ent)
         if not secret:
@@ -737,6 +1355,12 @@ def resolve_for_fill(
         raise ValueError(r.get("error") or "resolve_failed")
     origin_ok = True
     origin_reason = "not_checked"
+    grants = _active_grants()
+    if grants and r.get("backend") == "local":
+        allowed, why = _grant_allows(page_url)
+        if not allowed:
+            _audit("resolve_denied", ref=r.get("ref") or text, ok=False, detail=f"grant:{why}")
+            raise ValueError(f"grant_required:{why}")
     if page_url and r.get("backend") == "local":
         name = r.get("name")
         if not name:
@@ -764,6 +1388,10 @@ def resolve_for_fill(
             raise ValueError("origin_unbound")
         else:
             origin_reason = "unbound_allowed"
+    relocked = False
+    if r.get("backend") == "local" and os.environ.get("WICK_VAULT_RELOCK_AFTER_FILL") == "1":
+        lock()
+        relocked = True
     return str(r["value"]), {
         "resolved": True,
         "backend": r.get("backend"),
@@ -771,6 +1399,8 @@ def resolve_for_fill(
         "chars": r.get("chars"),
         "origin_ok": origin_ok,
         "origin_reason": origin_reason,
+        "granted": bool(grants),
+        "relocked": relocked,
     }
 
 
@@ -894,13 +1524,35 @@ def doctor() -> dict[str, Any]:
         checks.append({"name": "master_key_0600", "ok": km == "0o600", "mode": km})
     else:
         checks.append({"name": "master_key", "ok": bool(os.environ.get("WICK_VAULT_KEY")), "mode": "env_or_missing"})
+    sess_path = _paths()["session"]
+    if sess_path.is_file():
+        sm = oct(sess_path.stat().st_mode & 0o777)
+        checks.append({"name": "session_0600", "ok": sm == "0o600", "mode": sm})
     checks.append({"name": "local_backend", "ok": True})
+    info = crypto_info()
+    checks.append({"name": "aead_aes_256_gcm", "ok": bool(info["aead_available"]), "detail": info["aead"]})
+    checks.append(
+        {
+            "name": "store_format_wickvault2",
+            "ok": info["store_format"] in (VAULT_FORMAT, "none"),
+            "detail": info["store_format"],
+            "hint": "wickvault1 store migrates to wickvault2 on the next write" if info["migrate_on_write"] else None,
+        }
+    )
+    checks.append({"name": "key_hierarchy", "ok": True, "detail": info["hierarchy"]})
     checks.append({"name": "proton_pass_cli", "ok": bool(st["proton_pass"]["available"])})
     checks.append({"name": "keepassxc_cli", "ok": bool(st["keepassxc"]["available"])})
+    required = ("vault_dir_0700", "local_backend", "aead_aes_256_gcm")
     return {
-        "ok": all(c.get("ok") for c in checks if c["name"] in ("vault_dir_0700", "local_backend")),
+        "ok": all(c.get("ok") for c in checks if c["name"] in required),
         "product": "wick",
         "component": "vault",
+        "format": info["format"],
+        "aead": info["aead"],
+        "kdf": info["kdf"],
+        "hierarchy": info["hierarchy"],
+        "crypto": info,
+        "session": session_status(),
         "checks": checks,
         "backends": st,
     }

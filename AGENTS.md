@@ -151,9 +151,13 @@ wick act wait_text "Welcome"
 
 ```bash
 wick vault set example --username me --url https://example.com/login   # password via WICK_VAULT_SET_PASSWORD
+wick vault grant --url https://example.com/login --ttl 120             # JIT: resolve only this origin
 wick vault suggest --url https://example.com/login                     # refs + form hints, no secrets
 wick act login https://example.com/login                               # origin-bound autofill + submit
+wick vault lock                                                        # drop grants / passphrase session
 ```
+
+Local store is **wickvault2**: AES-256-GCM, HKDF wrap key → vault key → per-item key (same primitive class as Proton Pass / Bitwarden). Secrets still never enter agent JSON. File-key `master.key` is a standing disk key — prefer `WICK_VAULT_PASSPHRASE` + `unlock`/`lock` on shared machines. See [docs/VAULT-CRYPTO.md](docs/VAULT-CRYPTO.md).
 
 Fill is refused on a mismatched origin (phishing page). HTTPS-saved entries never fill on HTTP. `javascript:` / `data:` / private-network URLs are rejected unless `WICK_ALLOW_PRIVATE=1`.
 

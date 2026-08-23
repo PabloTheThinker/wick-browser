@@ -12,7 +12,16 @@ Wick includes an **open-source local vault** plus bridges to Proton Pass CLI, Ke
 - Store lives under `WICK_HOME/vault` (`0700`); master key `0600` or `WICK_VAULT_KEY`.
 - Audit log records actions with redacted refs only.
 
-See [VAULT.md](VAULT.md). Combine with shields + session isolation for the Brave-inspired stack — still **no** fingerprint farbling claim.
+### Local crypto (wickvault2)
+
+- **AES-256-GCM** via the `cryptography` package (OpenSSL) for every wrap and every item blob — no homemade stream cipher on the write path.
+- Key hierarchy **wrap → vault → item**: `HKDF-SHA256(master material, salt, "wick-vault-wrap")` wraps a random vault key, which wraps a random per-entry key, which encrypts the entry JSON. GCM AAD binds each blob to its entry name and saved origin.
+- Master material is a 32-byte `master.key` (agent default) or `WICK_VAULT_PASSPHRASE` stretched with Argon2id (`argon2-cffi`) or scrypt n=2^16, r=8, p=1. The passphrase is never logged, audited, or returned in JSON.
+- Only entry **names** are cleartext on disk; passwords, usernames, URLs, notes, and TOTP secrets live inside the blob. Failed unwrap → `bad_mac_or_key`, and 8 failures trigger a 30-second `vault_locked_cooldown`.
+- `wick vault unlock` / `lock` / `grant` (full-act only) issue just-in-time, origin-scoped access; `WICK_VAULT_RELOCK_AFTER_FILL=1` drops the session after a fill.
+- Honest limits: file-key mode keeps a standing key on disk (like an unlocked browser profile), `session.json` holds its session key in a `0600` file, and none of this is Proton cloud sync, third-party audited, or HSM-backed. `wickvault1` is read-only and migrates on the next write.
+
+See [VAULT.md](VAULT.md) and [VAULT-CRYPTO.md](VAULT-CRYPTO.md). Combine with shields + session isolation for the Brave-inspired stack — still **no** fingerprint farbling claim.
 
 ## Capability profiles (0.9)
 
