@@ -131,11 +131,26 @@ Fill is refused on a mismatched origin (phishing page). HTTPS-saved entries neve
 ## Sessions
 
 ```bash
-wick session new job42
+wick session new job42 --ephemeral --ttl 1800 --owner recon
 export WICK_SESSION=job42
 wick snap https://example.com/
-wick session save job42
+wick session promote job42    # keep cookies; otherwise sweep/auto-drop deletes it
+# wick session drop job42
 ```
+
+`WICK_SESSION_AUTO_DROP=1` deletes the current ephemeral session when the process exits, unless it was promoted. `wick session sweep` removes expired ephemeral sessions.
+
+## Capability profiles
+
+`WICK_PROFILE` locks what a harness process may do:
+
+| Profile | Can do | Cannot do |
+|---------|--------|-----------|
+| `observe-only` | snap/plan/ask/open, vault match/suggest | click, fill, login, downloads |
+| `safe-act` | observe + goto/click/scroll/tabs | fill, login, eval, get |
+| `full-act` (default) | everything | — |
+
+`WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts.
 
 ## Shields
 

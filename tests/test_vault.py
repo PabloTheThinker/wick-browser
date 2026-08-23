@@ -99,6 +99,7 @@ def test_vault_cli_list_no_leak(tmp_path):
     env = os.environ.copy()
     env["WICK_HOME"] = str(home)
     env.pop("WICK_VAULT_KEY", None)
+    env.pop("WICK_PROFILE", None)
     env["WICK_VAULT_SET_PASSWORD"] = "cli-secret-should-not-list"
 
     subprocess.run([sys.executable, str(WICK), "vault", "init"], check=True, env=env, cwd=str(ROOT), capture_output=True)

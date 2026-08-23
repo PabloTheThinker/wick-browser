@@ -119,6 +119,9 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_OBSERVE_CACHE` | `1` | Reuse snap gather for ~8s (plan/ask) |
 | `WICK_VAULT_REQUIRE_ORIGIN` | `1` | Refuse fill for entries with no saved URL |
 | `WICK_ALLOW_PRIVATE` | `0` | Allow localhost / RFC1918 fetches |
+| `WICK_PROFILE` | `full-act` | `observe-only` / `safe-act` / `full-act` |
+| `WICK_ALLOW_HOSTS` | — | Comma-separated host allowlist (`.suffix` ok) |
+| `WICK_SESSION_AUTO_DROP` | `0` | Drop ephemeral session on process exit |
 | `WICK_LP_PORT` | `9333` | Lightpanda CDP |
 | `WICK_CHROME_PORT` | `9222` | Chromium CDP |
 

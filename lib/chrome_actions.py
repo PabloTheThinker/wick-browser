@@ -31,6 +31,10 @@ try:
     import login_form as wick_login_form
 except Exception:
     wick_login_form = None  # type: ignore
+try:
+    import capability as wick_capability
+except Exception:
+    wick_capability = None  # type: ignore
 
 
 def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
@@ -45,6 +49,10 @@ def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
         return None, {"ok": False, "error": str(e), "url": (url or "")[:120]}
     if wick_origins.is_private_url(normalized) and not wick_origins.allow_private_override():
         return None, {"ok": False, "error": "private_url", "url": normalized[:120]}
+    if wick_capability is not None:
+        herr = wick_capability.deny_host(normalized)
+        if herr:
+            return None, herr
     return normalized, None
 
 

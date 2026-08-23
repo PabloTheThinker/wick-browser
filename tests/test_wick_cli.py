@@ -47,3 +47,11 @@ def test_lp_fetch_rejects_private_url_when_blocked(monkeypatch):
     result = wick.lp_fetch("http://127.0.0.1:8080/")
     assert result["ok"] is False
     assert result["error"] in ("private_url", "dangerous_url")
+
+
+def test_lp_fetch_honors_allow_hosts(monkeypatch):
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
+    monkeypatch.setenv("WICK_ALLOW_HOSTS", "example.com")
+    denied = wick.lp_fetch("https://evil.test/")
+    assert denied["ok"] is False
+    assert denied["error"] == "host_not_allowed"

@@ -14,6 +14,12 @@ Wick includes an **open-source local vault** plus bridges to Proton Pass CLI, Ke
 
 See [VAULT.md](VAULT.md). Combine with shields + session isolation for the Brave-inspired stack — still **no** fingerprint farbling claim.
 
+## Capability profiles (0.9)
+
+`WICK_PROFILE=observe-only` / `safe-act` / `full-act` is enforced at the CLI and RPC layer. A read-only harness cannot fill passwords or eval JS even if a page (or a confused planner) asks it to.
+
+`WICK_ALLOW_HOSTS` is an optional outbound allowlist for fetch/goto/login.
+
 ## Fetch / navigation guards (0.9)
 
 Lightpanda `fetch` and Chromium `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost). Override only with `WICK_ALLOW_PRIVATE=1`.

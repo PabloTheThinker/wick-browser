@@ -64,6 +64,10 @@ try:
     import observe_cache as wick_observe_cache
 except Exception:
     wick_observe_cache = None  # type: ignore
+try:
+    import capability as wick_capability
+except Exception:
+    wick_capability = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -434,6 +438,11 @@ def lp_fetch(
             else:
                 guarded.append(u)
         urls = guarded
+    if wick_capability is not None:
+        for u in urls:
+            herr = wick_capability.deny_host(u)
+            if herr:
+                return herr
 
     lp_bin = find_lightpanda()
     if not lp_bin:
@@ -716,6 +725,8 @@ def cmd_status(_: argparse.Namespace) -> int:
                     "cdp": f"http://127.0.0.1:{CHROME_PORT}",
                     "pid": read_pid("chromium"),
                 },
+                "profile": wick_capability.current_profile() if wick_capability else "full-act",
+                "allow_hosts": wick_capability.parse_allow_hosts() if wick_capability else [],
             },
             indent=2,
         )
@@ -1069,22 +1080,38 @@ def cmd_session(args: argparse.Namespace) -> int:
     act = args.action
     name = args.name or "default"
     if act == "list":
-        print(json.dumps({"ok": True, "sessions": wick_shields.list_sessions()}))
+        swept = wick_shields.sweep_sessions()
+        print(json.dumps({"ok": True, "sessions": wick_shields.list_sessions(), "swept": swept.get("dropped") or []}))
         return 0
     if act == "new":
-        d = wick_shields.session_dir(name)
-        print(json.dumps({"ok": True, "created": name, "path": str(d)}))
-        return 0
+        ttl = getattr(args, "ttl", None)
+        out = wick_shields.new_session(
+            name,
+            ephemeral=bool(getattr(args, "ephemeral", False)),
+            ttl=int(ttl) if ttl else None,
+            owner=getattr(args, "owner", None),
+        )
+        out["export"] = f"export WICK_SESSION={out.get('name') or name}"
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     if act == "use":
-        # print export line for shell
         print(json.dumps({"ok": True, "session": name, "export": f"export WICK_SESSION={name}"}))
         return 0
-    if act == "save":
-        print(json.dumps(wick_shields.promote_jar_to_load(name)))
+    if act in ("save", "promote"):
+        print(json.dumps(wick_shields.promote_session(name)))
         return 0
     if act == "path":
         load, jar = wick_shields.session_cookie_paths(name)
         print(json.dumps({"ok": True, "session": name, "load": str(load), "jar": str(jar)}))
+        return 0
+    if act == "meta":
+        print(json.dumps({"ok": True, **wick_shields.session_meta(name)}, ensure_ascii=False))
+        return 0
+    if act == "drop":
+        print(json.dumps(wick_shields.drop_session(name, force_default=bool(getattr(args, "force", False)))))
+        return 0
+    if act == "sweep":
+        print(json.dumps(wick_shields.sweep_sessions()))
         return 0
     print(json.dumps({"ok": False, "error": f"unknown {act}"}))
     return 2
@@ -1251,6 +1278,33 @@ def cmd_run(args: argparse.Namespace) -> int:
             results.append({"i": i, "ok": False, "error": "step_not_object"})
             continue
         act = step.get("action") or step.get("op")
+        if act in ("session_new", "session_save", "session_promote", "session_drop", "session_sweep"):
+            if not wick_shields:
+                results.append({"i": i, "action": act, "ok": False, "error": "no_shields_module"})
+                continue
+            sname = step.get("name") or os.environ.get("WICK_SESSION", "default")
+            if act == "session_new":
+                r = wick_shields.new_session(
+                    sname,
+                    ephemeral=bool(step.get("ephemeral")),
+                    ttl=int(step["ttl"]) if step.get("ttl") else None,
+                    owner=step.get("owner"),
+                )
+            elif act in ("session_save", "session_promote"):
+                r = wick_shields.promote_session(sname)
+            elif act == "session_drop":
+                r = wick_shields.drop_session(sname, force_default=bool(step.get("force")))
+            else:
+                r = wick_shields.sweep_sessions()
+            results.append({"i": i, "action": act, "result": r})
+            continue
+        if wick_capability is not None and act in (
+            "goto", "click", "fill", "select", "login", "eval", "download", "get",
+        ):
+            denied = wick_capability.deny("act" if act != "get" else "get", action=act)
+            if denied:
+                results.append({"i": i, "action": act, "result": denied})
+                continue
         if act in ("open", "fetch", "probe", "tree", "links", "snap", "elements"):
             url = step.get("url")
             if act == "open":
@@ -2060,6 +2114,10 @@ def _rpc_handlers() -> dict:
       action = args.get("action")
       if not action:
           return {"ok": False, "error": "missing_action"}
+      if wick_capability is not None:
+          denied = wick_capability.deny("act", action=str(action))
+          if denied:
+              return denied
       rest = [str(x) for x in (args.get("rest") or [])]
       resolved, vmeta = _resolve_act_rest(str(action), rest)
       if resolved is None:
@@ -2092,6 +2150,10 @@ def _rpc_handlers() -> dict:
       if wick_vault is None:
           return {"ok": False, "error": "vault_module_missing"}
       act = args.get("action") or "status"
+      if wick_capability is not None:
+          denied = wick_capability.deny("vault", vault_action=str(act))
+          if denied:
+              return denied
       if act in ("status", "backends"):
           return wick_vault.status()
       if act == "doctor":
@@ -2120,17 +2182,30 @@ def _rpc_handlers() -> dict:
       act = args.get("action") or "list"
       name = args.get("name") or "default"
       if act == "list":
-          return {"ok": True, "sessions": wick_shields.list_sessions()}
+          swept = wick_shields.sweep_sessions()
+          return {"ok": True, "sessions": wick_shields.list_sessions(), "swept": swept.get("dropped") or []}
       if act == "new":
-          d = wick_shields.session_dir(name)
-          return {"ok": True, "created": name, "path": str(d)}
+          out = wick_shields.new_session(
+              name,
+              ephemeral=bool(args.get("ephemeral")),
+              ttl=int(args["ttl"]) if args.get("ttl") else None,
+              owner=args.get("owner"),
+          )
+          out["export"] = f"export WICK_SESSION={out.get('name') or name}"
+          return out
       if act == "use":
           return {"ok": True, "session": name, "export": f"export WICK_SESSION={name}"}
-      if act == "save":
-          return wick_shields.promote_jar_to_load(name)
+      if act in ("save", "promote"):
+          return wick_shields.promote_session(name)
       if act == "path":
           load, jar = wick_shields.session_cookie_paths(name)
           return {"ok": True, "session": name, "load": str(load), "jar": str(jar)}
+      if act == "meta":
+          return {"ok": True, **wick_shields.session_meta(name)}
+      if act == "drop":
+          return wick_shields.drop_session(name, force_default=bool(args.get("force")))
+      if act == "sweep":
+          return wick_shields.sweep_sessions()
       return {"ok": False, "soft": True, "error": f"unknown_session_action:{act}"}
 
   def _tools(_args: dict) -> dict:
@@ -2392,9 +2467,13 @@ def main() -> int:
     p.add_argument("--index", type=int, help="for switch/close")
     _add_json_only(p)
 
-    p = sub.add_parser("session", help="Cookie session isolation (Browser-Use-like persistence)")
-    p.add_argument("action", choices=["list", "new", "use", "save", "path"])
+    p = sub.add_parser("session", help="Cookie session isolation (ephemeral-by-choice, promote to keep)")
+    p.add_argument("action", choices=["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep"])
     p.add_argument("name", nargs="?", default="default")
+    p.add_argument("--ephemeral", action="store_true", help="with new: auto-sweep unless promoted")
+    p.add_argument("--ttl", type=int, help="with new --ephemeral: lifetime in seconds")
+    p.add_argument("--owner", help="with new: agent/owner tag")
+    p.add_argument("--force", action="store_true", help="with drop: allow deleting the default session")
     _add_json_only(p)
 
     p = sub.add_parser(
@@ -2548,6 +2627,30 @@ def main() -> int:
     sub.add_parser("install-engine", help="Download free Lightpanda nightly (optional backend)")
 
     args = ap.parse_args()
+    if wick_capability is not None:
+        denied = wick_capability.deny(
+            args.cmd,
+            action=getattr(args, "action", None) if args.cmd in ("act", "tabs") else None,
+            vault_action=getattr(args, "vault_action", None) if args.cmd == "vault" else None,
+            session_action=getattr(args, "action", None) if args.cmd == "session" else None,
+        )
+        if denied:
+            print(json.dumps(denied, ensure_ascii=False))
+            return 1
+    if wick_shields is not None and os.environ.get("WICK_SESSION_AUTO_DROP", "0") == "1":
+        import atexit
+
+        sess = os.environ.get("WICK_SESSION", "default")
+
+        def _autodrop(name: str = sess) -> None:
+            try:
+                meta = wick_shields.session_meta(name)
+                if meta.get("ephemeral") and not meta.get("promoted"):
+                    wick_shields.drop_session(name, force_default=True)
+            except Exception:
+                pass
+
+        atexit.register(_autodrop)
     return {
         "version": cmd_version,
         "doctor": cmd_doctor,

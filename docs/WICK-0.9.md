@@ -16,6 +16,10 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 - Privacy headers: Referrer-Policy + Chromium DNT / Sec-GPC
 - `plan` suggests `wick act login` when a password field is present
 - Playbook action `login`
+- Ephemeral sessions: `wick session new NAME --ephemeral --ttl 1800 --owner agent`
+- `wick session promote` / `save` keeps cookies; `drop` / `sweep` deletes unpromoted TTL sessions
+- Capability profiles: `WICK_PROFILE=observe-only|safe-act|full-act`
+- Outbound allowlist: `WICK_ALLOW_HOSTS=example.com,.github.com`
 
 ## Security contract (additions)
 

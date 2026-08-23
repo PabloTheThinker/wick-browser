@@ -151,18 +151,31 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_session",
-        "Cookie/session isolation: list, new, use, save, path.",
+        "Cookie/session isolation: list, new (optional ephemeral+ttl), use, save/promote, drop, sweep, meta, path.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "new", "use", "save", "path"],
+                    "enum": ["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep"],
                 },
                 "name": {
                     "type": "string",
                     "description": "Session name (default: default).",
                     "default": "default",
+                },
+                "ephemeral": {
+                    "type": "boolean",
+                    "description": "With new: delete on sweep/auto-drop unless promoted.",
+                    "default": False,
+                },
+                "ttl": {
+                    "type": "integer",
+                    "description": "With new --ephemeral: lifetime in seconds.",
+                },
+                "owner": {
+                    "type": "string",
+                    "description": "Optional agent/owner tag.",
                 },
             },
             "required": ["action"],
