@@ -68,6 +68,14 @@ try:
     import capability as wick_capability
 except Exception:
     wick_capability = None  # type: ignore
+try:
+    import snap_profile as wick_snap_profile
+except Exception:
+    wick_snap_profile = None  # type: ignore
+try:
+    import mcp_stdio as wick_mcp
+except Exception:
+    wick_mcp = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -1673,6 +1681,51 @@ def _title_from_tree(tree_text: str) -> str | None:
     return None
 
 
+def _apply_profile(
+    profile: str | None,
+    *,
+    fast: bool,
+    wait_ms: int,
+    max_chars: int,
+    excerpt_len: int,
+    elements_limit: int,
+    link_limit: int,
+    tree_max: int,
+) -> dict:
+    """Merge a named observe profile with call-site budgets."""
+    skip_md = False
+    name = None
+    effective = profile
+    if not effective and wick_snap_profile is not None:
+        env_p = (os.environ.get("WICK_SNAP_PROFILE") or "").strip()
+        if env_p:
+            effective = env_p
+    if wick_snap_profile is not None and effective:
+        p = wick_snap_profile.apply(effective)
+        name = wick_snap_profile.resolve(effective)
+        fast = bool(p["fast"])
+        wait_ms = int(p["wait_ms"])
+        max_chars = int(p["max_chars"])
+        excerpt_len = int(p["excerpt"])
+        elements_limit = int(p["elements"])
+        link_limit = int(p["link_limit"])
+        tree_max = int(p["tree_max"])
+        skip_md = bool(p["skip_markdown"])
+    elif fast:
+        name = "default"
+    return {
+        "fast": fast,
+        "wait_ms": wait_ms,
+        "max_chars": max_chars,
+        "excerpt_len": excerpt_len,
+        "elements_limit": elements_limit,
+        "link_limit": link_limit,
+        "tree_max": tree_max,
+        "skip_markdown": skip_md,
+        "profile": name,
+    }
+
+
 def _gather_snap(
     url: str,
     *,
@@ -1685,10 +1738,34 @@ def _gather_snap(
     wait_ms: int = 2000,
     fast: bool = False,
     no_strip: bool = False,
+    profile: str | None = None,
+    skip_markdown: bool = False,
 ) -> dict:
     """Shared snap gather for snap/plan/ask (no print)."""
+    budgets = _apply_profile(
+        profile,
+        fast=fast,
+        wait_ms=wait_ms,
+        max_chars=max_chars,
+        excerpt_len=excerpt_len,
+        elements_limit=elements_limit,
+        link_limit=link_limit,
+        tree_max=tree_max,
+    )
+    fast = bool(budgets["fast"])
+    wait_ms = int(budgets["wait_ms"])
+    max_chars = int(budgets["max_chars"])
+    excerpt_len = int(budgets["excerpt_len"])
+    elements_limit = int(budgets["elements_limit"])
+    link_limit = int(budgets["link_limit"])
+    tree_max = int(budgets["tree_max"])
+    skip_markdown = bool(skip_markdown or budgets["skip_markdown"])
+    prof = budgets.get("profile")
+
     strips = _observe_strip(no_strip=no_strip)
     wait = 1200 if fast else wait_ms
+    if prof == "micro":
+        wait = min(wait, 800)
     wu = "domcontentloaded" if fast else (wait_until or "load")
     md_max = min(max_chars, 8000) if fast else max_chars
     tree_cap = min(tree_max, 40000) if fast else tree_max
@@ -1701,39 +1778,55 @@ def _gather_snap(
             wait_ms=wait,
             session=os.environ.get("WICK_SESSION", "default"),
             mode="snap",
+            profile=str(prof or ""),
         )
         hit = wick_observe_cache.get(cache_key)
         if hit and hit.get("ok"):
             hit["cache"] = True
+            timing = dict(hit.get("timing") or {})
+            timing["cache"] = True
+            hit["timing"] = timing
             return hit
 
-    # Tree first in fast mode: elements + title without waiting on full markdown.
-    tree_r = lp_fetch(
-        url,
-        dump="semantic_tree_text",
-        max_chars=tree_cap,
-        wait_until=wu,
-        wait_ms=wait,
-        strip=strips,
-    )
-    elements = []
-    tree_title = None
-    if tree_r.get("ok") and wick_elements is not None:
-        tree_text = tree_r.get("content") or ""
+    t0 = time.time()
+    fetch_kw = dict(wait_until=wu, wait_ms=wait, strip=strips)
+
+    def _tree():
+        return lp_fetch(url, dump="semantic_tree_text", max_chars=tree_cap, **fetch_kw)
+
+    def _md():
+        return lp_fetch(url, dump="markdown", max_chars=md_max or 4000, **fetch_kw)
+
+    if skip_markdown:
+        tree_r = _tree()
+        if not tree_r.get("ok"):
+            return tree_r
+        md = {
+            "ok": True,
+            "content": "",
+            "ms": 0,
+            "chars": 0,
+            "url": tree_r.get("url") or url,
+            "http_ok": tree_r.get("http_ok"),
+            "http_status": tree_r.get("http_status"),
+        }
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            ft = pool.submit(_tree)
+            fm = pool.submit(_md)
+            tree_r = ft.result()
+            md = fm.result()
+    tree_text = (tree_r.get("content") or "") if tree_r.get("ok") else ""
+    tree_title = _title_from_tree(tree_text)
+    if wick_elements is not None and tree_text:
         elements = wick_elements.interactive_only(
             wick_elements.parse_tree_text(tree_text),
             limit=elements_limit,
         )
-        tree_title = _title_from_tree(tree_text)
-
-    md = lp_fetch(
-        url,
-        dump="markdown",
-        max_chars=md_max,
-        wait_until=wu,
-        wait_ms=wait,
-        strip=strips,
-    )
+    else:
+        elements = []
     if not md.get("ok"):
         if tree_r.get("ok"):
             tree_only = {
@@ -1757,6 +1850,15 @@ def _gather_snap(
                 "fast": bool(fast),
                 "strip": strips,
                 "tree_only": True,
+                "profile": prof,
+                "timing": {
+                    "total_ms": int((time.time() - t0) * 1000),
+                    "tree_ms": tree_r.get("ms") or 0,
+                    "md_ms": 0,
+                    "cache": False,
+                    "profile": prof,
+                    "parallel": False,
+                },
             }
             if wick_observe_cache is not None and cache_key:
                 wick_observe_cache.put(cache_key, tree_only)
@@ -1792,7 +1894,26 @@ def _gather_snap(
         "tree_chars": tree_r.get("chars"),
         "fast": bool(fast),
         "strip": strips,
+        "profile": prof,
+        "timing": {
+            "total_ms": int((time.time() - t0) * 1000),
+            "tree_ms": tree_r.get("ms") or 0,
+            "md_ms": md.get("ms") or 0,
+            "cache": False,
+            "profile": prof,
+            "parallel": not skip_markdown,
+        },
     }
+    if skip_markdown:
+        gathered["tree_only"] = True
+        excerpt_bits = [tree_title or ""] + [
+            str(e.get("name") or "") for e in elements[:8]
+        ]
+        gathered["excerpt"] = re.sub(r"\s+", " ", " · ".join(x for x in excerpt_bits if x)).strip()[:excerpt_len]
+        gathered["markdown"] = ""
+        gathered["link_count"] = 0
+        gathered["links"] = []
+        gathered["links_all"] = []
     if wick_observe_cache is not None and cache_key:
         wick_observe_cache.put(cache_key, gathered)
     return gathered
@@ -1827,6 +1948,7 @@ def snap_payload(
     fast: bool = False,
     no_strip: bool = False,
     full: bool = False,
+    profile: str | None = None,
 ) -> dict:
     snap = _gather_snap(
         url,
@@ -1839,6 +1961,7 @@ def snap_payload(
         wait_ms=wait_ms,
         fast=fast,
         no_strip=no_strip,
+        profile=profile,
     )
     if not snap.get("ok"):
         return snap
@@ -1851,6 +1974,57 @@ def snap_payload(
         out.pop("markdown", None)
     out.pop("links_all", None)
     return _annotate_observe(out)
+
+
+def snap_many_payload(
+    urls: list[str],
+    *,
+    profile: str = "micro",
+    concurrency: int = 4,
+    fast: bool = True,
+) -> dict:
+    """Bounded-concurrency observe for agent planners."""
+    cleaned = [str(u).strip() for u in urls if str(u).strip()]
+    if not cleaned:
+        return {"ok": False, "product": "wick", "error": "no_url"}
+    conc = max(1, min(int(concurrency or 4), 8))
+    from concurrent.futures import ThreadPoolExecutor
+
+    results: list[dict] = [{} for _ in cleaned]
+
+    def _one(i: int, u: str) -> tuple[int, dict]:
+        return i, snap_payload(u, profile=profile, fast=fast)
+
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=conc) as pool:
+        futs = [pool.submit(_one, i, u) for i, u in enumerate(cleaned)]
+        for f in futs:
+            i, r = f.result()
+            results[i] = r
+    ok = all(r.get("ok") for r in results)
+    return {
+        "ok": ok,
+        "product": "wick",
+        "version": VERSION,
+        "mode": "agent_snap_many",
+        "count": len(results),
+        "profile": profile,
+        "concurrency": conc,
+        "ms": int((time.time() - t0) * 1000),
+        "results": results,
+        "untrusted_content": True,
+    }
+
+
+def cmd_snap_many(args: argparse.Namespace) -> int:
+    """Bounded-concurrency observe for agent planners."""
+    out = snap_many_payload(
+        list(getattr(args, "urls", None) or []),
+        profile=getattr(args, "profile", None) or "micro",
+        concurrency=int(getattr(args, "concurrency", 4) or 4),
+    )
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
 
 
 def cmd_snap(args: argparse.Namespace) -> int:
@@ -1867,6 +2041,7 @@ def cmd_snap(args: argparse.Namespace) -> int:
         fast=bool(args.fast),
         no_strip=bool(args.no_strip),
         full=bool(args.full),
+        profile=getattr(args, "profile", None),
     )
     if not out.get("ok"):
         print(json.dumps(out, ensure_ascii=False))
@@ -1891,6 +2066,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         wait_ms=args.wait_ms,
         fast=bool(args.fast),
         no_strip=bool(args.no_strip),
+        profile=getattr(args, "profile", None),
     )
     if not snap.get("ok"):
         print(json.dumps(snap, ensure_ascii=False))
@@ -1945,6 +2121,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         wait_ms=args.wait_ms,
         fast=bool(args.fast),
         no_strip=bool(args.no_strip),
+        profile=getattr(args, "profile", None),
     )
     if not snap.get("ok"):
         print(json.dumps(snap, ensure_ascii=False))
@@ -2043,9 +2220,10 @@ def _rpc_handlers() -> dict:
           tree_max=int(args.get("tree_max") or 60000),
           wait_until=args.get("wait_until") or "load",
           wait_ms=int(args.get("wait_ms") or 2000),
-          fast=bool(args.get("fast")),
+          fast=bool(args.get("fast") if "fast" in args else True),
           no_strip=bool(args.get("no_strip")),
           full=bool(args.get("full")),
+          profile=args.get("profile"),
       )
 
   def _plan(args: dict) -> dict:
@@ -2058,8 +2236,9 @@ def _rpc_handlers() -> dict:
           tree_max=int(args.get("tree_max") or 60000),
           wait_until=args.get("wait_until") or "load",
           wait_ms=int(args.get("wait_ms") or 2000),
-          fast=bool(args.get("fast")),
+          fast=bool(args.get("fast") if "fast" in args else True),
           no_strip=bool(args.get("no_strip")),
+          profile=args.get("profile"),
       )
       if not snap.get("ok"):
           return snap
@@ -2100,8 +2279,9 @@ def _rpc_handlers() -> dict:
           tree_max=int(args.get("tree_max") or 60000),
           wait_until=args.get("wait_until") or "load",
           wait_ms=int(args.get("wait_ms") or 2000),
-          fast=bool(args.get("fast")),
+          fast=bool(args.get("fast") if "fast" in args else True),
           no_strip=bool(args.get("no_strip")),
+          profile=args.get("profile"),
       )
       if not snap.get("ok"):
           return snap
@@ -2279,6 +2459,16 @@ def _rpc_handlers() -> dict:
           return {"ok": False, "error": "tools_schema_missing"}
       return wick_tools_schema.tools_export(VERSION)
 
+  def _snap_many(args: dict) -> dict:
+      urls = args.get("urls")
+      if not isinstance(urls, list) or not urls:
+          return {"ok": False, "error": "urls[] required"}
+      return snap_many_payload(
+          [str(u) for u in urls],
+          profile=str(args.get("profile") or "micro"),
+          concurrency=int(args.get("concurrency") or 4),
+      )
+
   def _version(_args: dict) -> dict:
       return {"ok": True, "product": "wick", "version": VERSION}
 
@@ -2302,6 +2492,8 @@ def _rpc_handlers() -> dict:
       "act": _act,
       "vault": _vault,
       "session": _session,
+      "snap_many": _snap_many,
+      "snap-many": _snap_many,
       "tools": _tools,
       "version": _version,
       "status": _status,
@@ -2330,6 +2522,18 @@ def cmd_rpc(args: argparse.Namespace) -> int:
         print(json.dumps(resp, ensure_ascii=False))
         return 0 if resp.get("ok") else 1
     return wick_rpc.run_stdio_loop(handlers)
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """MCP stdio server for Hermes, Claude Desktop, Cursor, and other MCP clients."""
+    if wick_mcp is None:
+        print(json.dumps({"ok": False, "error": "mcp_module_missing"}))
+        return 1
+    return wick_mcp.run_stdio(
+        _rpc_handlers(),
+        version=VERSION,
+        once=getattr(args, "once", None),
+    )
 
 
 def cmd_goto(a: argparse.Namespace) -> int:
@@ -2423,6 +2627,15 @@ def _add_json_only(p: argparse.ArgumentParser) -> None:
         action="store_true",
         default=True,
         help="Emit JSON only (default; agent-first)",
+    )
+
+
+def _add_observe_profile(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--profile",
+        choices=["micro", "default", "full"],
+        default=None,
+        help="observe budget: micro=tree only, default=fast excerpt, full=longer wait",
     )
 
 
@@ -2604,6 +2817,7 @@ def main() -> int:
     p.add_argument("--full", action="store_true", help="include full markdown body")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("observe", help="Alias for snap (agent observe snapshot)")
@@ -2619,6 +2833,13 @@ def main() -> int:
     p.add_argument("--full", action="store_true", help="include full markdown body")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
+    _add_json_only(p)
+
+    p = sub.add_parser("snap-many", help="Parallel situation reports (default profile=micro)")
+    p.add_argument("urls", nargs="+")
+    p.add_argument("--concurrency", type=int, default=4)
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("elements", help="Interactive element list for agent clicks")
@@ -2643,6 +2864,7 @@ def main() -> int:
     p.add_argument("--fast", action="store_true", help="domcontentloaded + 1200ms wait")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("ask", help="Snap + fuzzy filter links/elements by query (no LLM)")
@@ -2658,6 +2880,7 @@ def main() -> int:
     p.add_argument("--fast", action="store_true")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("probe", help="Compact agent brief: status, title, links, excerpt")
@@ -2700,6 +2923,10 @@ def main() -> int:
     p = sub.add_parser("rpc", help="JSON-lines stdio RPC for agent harnesses")
     p.add_argument("mode", nargs="?", default="stdio", choices=["stdio"])
     p.add_argument("--once", help="process one JSON line (for tests)")
+    _add_json_only(p)
+
+    p = sub.add_parser("mcp", help="MCP stdio server (Hermes, Claude Desktop, Cursor)")
+    p.add_argument("--once", help="One JSON-RPC request instead of stdin loop (tests)")
     _add_json_only(p)
 
     sub.add_parser("prune")
@@ -2756,9 +2983,11 @@ def main() -> int:
         "probe": cmd_probe,
         "snap": cmd_snap,
         "observe": cmd_snap,
+        "snap-many": cmd_snap_many,
         "elements": cmd_elements,
         "tools": cmd_tools,
         "rpc": cmd_rpc,
+        "mcp": cmd_mcp,
         "plan": cmd_plan,
         "ask": cmd_ask,
         "xexam": cmd_xexam,

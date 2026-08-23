@@ -48,8 +48,9 @@ def cache_key(
     wait_ms: int,
     session: str,
     mode: str = "snap",
+    profile: str = "",
 ) -> str:
-    raw = f"{url.strip()}|{int(bool(fast))}|{int(wait_ms)}|{session}|{mode}"
+    raw = f"{url.strip()}|{int(bool(fast))}|{int(wait_ms)}|{session}|{mode}|{profile}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 

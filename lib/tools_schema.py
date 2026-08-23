@@ -20,6 +20,12 @@ FAIL_HTTP_PROP = {
     "default": False,
 }
 
+PROFILE_PROP = {
+    "type": "string",
+    "enum": ["micro", "default", "full"],
+    "description": "Observe budget: micro=tree only (~0.8s); default=fast excerpt; full=longer wait.",
+}
+
 
 def _fn(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -35,11 +41,12 @@ def _fn(name: str, description: str, parameters: dict[str, Any]) -> dict[str, An
 WICK_TOOLS: list[dict[str, Any]] = [
     _fn(
         "wick_snap",
-        "Compact page snapshot: title, excerpt, links, interactive elements (primary observe).",
+        "Compact page snapshot: title, excerpt, links, interactive elements (primary observe). Use profile=micro for the cheapest first look (Hermes/Claude).",
         {
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "full": {
                     "type": "boolean",
@@ -58,6 +65,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "full": {"type": "boolean", "default": False},
                 "fail_http": FAIL_HTTP_PROP,
@@ -72,6 +80,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "fail_http": FAIL_HTTP_PROP,
             },
@@ -89,10 +98,32 @@ WICK_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Search terms (case-insensitive substring match).",
                 },
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "fail_http": FAIL_HTTP_PROP,
             },
             "required": ["url", "q"],
+        },
+    ),
+    _fn(
+        "wick_snap_many",
+        "Parallel observe of many URLs (bounded concurrency). Prefer profile=micro.",
+        {
+            "type": "object",
+            "properties": {
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Absolute URLs to observe.",
+                },
+                "profile": {**PROFILE_PROP, "default": "micro"},
+                "concurrency": {
+                    "type": "integer",
+                    "description": "Max parallel fetches (1–8).",
+                    "default": 4,
+                },
+            },
+            "required": ["urls"],
         },
     ),
     _fn(
@@ -210,5 +241,5 @@ def tools_export(version: str) -> dict[str, Any]:
         "version": version,
         "schema": "openai_tools_v1",
         "tools": WICK_TOOLS,
-        "hint": "Load tools[] into agent harness; call via wick rpc stdio or CLI.",
+        "hint": "ChatGPT/Grok: load tools[] then call wick rpc stdio. Claude/Hermes/Cursor: wick mcp (JSON-RPC 2.0).",
     }

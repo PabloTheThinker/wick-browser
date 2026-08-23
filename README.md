@@ -7,13 +7,13 @@ Not a human browser with a side door for bots — a tool built so **agents** can
 *Wick brothers: light recon + heavy contact — one mission, clean tools, no wasted motion.*
 
 ```bash
-wick snap https://example.com/ --fast                  # observe: title, excerpt, links, targets
+wick snap https://example.com/ --profile micro         # cheapest observe (tree only)
 wick plan https://example.com/ --fast                  # suggested next actions (cmd + why)
 wick ask  https://example.com/ --q "more information"  # filter targets by query — no LLM
 wick act  click 'role=link[name="More information"]'   # act: hints resolve directly
 ```
 
-**Agents:** start with [AGENTS.md](AGENTS.md) and [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
+**Agents:** start with [AGENTS.md](AGENTS.md). Hermes / Claude / ChatGPT / Grok: [docs/HERMES.md](docs/HERMES.md).
 
 ## Why Wick
 
@@ -56,11 +56,16 @@ Data directory: `~/.wick/` (override with `WICK_HOME`).
 ```bash
 # Observe & plan (Lightpanda — light recon)
 wick ensure
-wick snap URL --fast          # agent situation report
+wick snap URL --profile micro # cheapest situation report (tree only)
+wick snap URL --fast          # tree + excerpt in parallel
+wick snap-many URL URL…       # parallel observe
 wick plan URL --fast          # suggested next actions
 wick ask URL --q "terms"      # filter links/elements by query
 wick elements URL             # interactive hints
 wick open URL                 # full markdown
+wick mcp                      # MCP stdio (Hermes, Claude, Cursor)
+wick tools                    # OpenAI tools[] (ChatGPT, Grok)
+wick rpc stdio                # JSON-lines RPC
 wick tree URL                 # semantic tree
 wick batch URL URL…           # multi-fetch
 wick links URL --limit 20
@@ -120,6 +125,7 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_PROXY` / `HTTPS_PROXY` | — | HTTP(S) proxy (creds never logged) |
 | `WICK_PRIVACY_HEADERS` | `1` | DNT / Sec-GPC / Referrer-Policy |
 | `WICK_OBSERVE_CACHE` | `1` | Reuse snap gather for ~8s (plan/ask) |
+| `WICK_SNAP_PROFILE` | `default` | Observe budget when `--profile` is omitted (`micro`/`default`/`full`) |
 | `WICK_VAULT_REQUIRE_ORIGIN` | `1` | Refuse fill for entries with no saved URL |
 | `WICK_ALLOW_PRIVATE` | `0` | Allow localhost / RFC1918 fetches |
 | `WICK_PROFILE` | `full-act` | `observe-only` / `safe-act` / `full-act` |
@@ -147,6 +153,7 @@ wick-browser/
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — **start here if you are an agent**
+- [docs/HERMES.md](docs/HERMES.md) — Hermes, Claude, ChatGPT, Grok (MCP + tools)
 - [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md) — observe / act / session / playbook architecture  
 - [ABOUT.md](ABOUT.md) — product story & non-goals  
 - [docs/SECURITY.md](docs/SECURITY.md) — CDP, shields honesty, proxy, `WICK_HOME`  

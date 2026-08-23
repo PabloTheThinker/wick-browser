@@ -39,6 +39,9 @@ class TestProfiles(unittest.TestCase):
         self.assertIsNotNone(capability.deny("act", action="login"))
         self.assertIsNone(capability.deny("vault", vault_action="suggest"))
         self.assertIsNotNone(capability.deny("vault", vault_action="set"))
+        self.assertIsNone(capability.deny("mcp"))
+        self.assertIsNone(capability.deny("snap-many"))
+        self.assertIsNone(capability.deny("snap_many"))
 
     def test_safe_act_allows_click_blocks_fill(self):
         os.environ["WICK_PROFILE"] = "safe-act"

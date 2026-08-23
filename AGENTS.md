@@ -14,30 +14,42 @@ Wick is a **browser for agents** — not a human GUI with an API bolted on.
 
 Still available when you need them: `wick elements URL` (dense target list) and `wick open URL --fast` (full markdown, the long read). **`wick observe`** is an alias for **`wick snap`**.
 
-## Agent harness integration (0.7)
+## Agent harness integration
 
-### Tool schemas
+Pick the socket that matches the model. Full Hermes / Claude / ChatGPT / Grok map: [docs/HERMES.md](docs/HERMES.md).
 
-```bash
-wick tools
-```
-
-Exports OpenAI-style `tools[]` for `wick_snap`, `wick_plan`, `wick_ask`, `wick_open`, `wick_act`, `wick_session`, and `wick_elements`. Load into your agent framework or MCP bridge.
-
-### JSON-lines RPC
+### Hermes Agent / Claude / Cursor — MCP
 
 ```bash
-wick rpc stdio
+wick mcp
 ```
 
-Each stdin line is one request; stdout is one JSON response:
+JSON-RPC 2.0 on stdio (`initialize`, `tools/list`, `tools/call`, `ping`). Tool names are short (`snap`, `act`) so Hermes registers `mcp_wick_snap`. Example config: `examples/hermes.yaml`.
+
+```yaml
+mcp_servers:
+  wick:
+    command: wick
+    args: [mcp]
+    env:
+      WICK_PROFILE: safe-act
+```
+
+Loop: `snap` `profile=micro` → `plan` / `ask` → `act` with `elements[].hint`. Vault login only under `WICK_PROFILE=full-act`.
+
+### ChatGPT / Grok — OpenAI tools + RPC
+
+```bash
+wick tools          # tools[] for wick_snap, wick_plan, wick_snap_many, wick_act, …
+wick rpc stdio      # one JSON line in, one JSON object out
+```
 
 ```json
-{"id": 1, "cmd": "snap", "args": {"url": "https://example.com/", "fast": true}}
+{"id": 1, "cmd": "snap", "args": {"url": "https://example.com/", "profile": "micro"}}
 {"id": 1, "ok": true, "title": "Example Domain", "untrusted_content": true, ...}
 ```
 
-Known commands: `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
+Known RPC commands: `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
 
 ## Untrusted content (observe outputs)
 
@@ -71,10 +83,11 @@ Every command prints **one JSON object** (unless human help text).
 ## `snap` (primary observe tool)
 
 ```bash
-wick snap https://example.com/ --fast
+wick snap https://example.com/ --profile micro    # tree only, cheapest first look
+wick snap https://example.com/ --fast             # default: tree + excerpt in parallel
 ```
 
-Returns: `title`, `excerpt`, `links[]`, `elements[]` (interactive), timings.
+Returns: `title`, `excerpt`, `links[]`, `elements[]` (interactive), `timing`.
 
 ```json
 {"id": 12, "role": "link", "name": "More information", "hint": "role=link[name=\"More information\"]", "interactive": true}
@@ -174,12 +187,16 @@ Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth.
 
 ## Speed
 
-| Flag | Effect |
-|------|--------|
-| `--fast` | `domcontentloaded` + ~1.2s wait (snap/plan/ask/open) |
-| default wait | `open` 1500ms; `snap`/`plan`/`ask` 2000ms |
-| `wick batch` | many URLs one process |
+| Flag / profile | Effect |
+|----------------|--------|
+| `--profile micro` | tree only (~800ms). No markdown fetch. Hermes first step. |
+| `--profile default` / `--fast` | tree + markdown **in parallel** (~1200ms) |
+| `--profile full` | longer wait + larger excerpt (~2000ms) |
+| `wick snap-many URL URL…` | bounded parallel observe (default micro, concurrency 4) |
 | observe cache | snap/plan/ask reuse one fetch for ~8s (`WICK_OBSERVE_CACHE=0` to disable) |
+| `WICK_SNAP_PROFILE` | default profile when `--profile` is omitted |
+
+`timing` on snap: `total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`.
 
 ## Playbook
 

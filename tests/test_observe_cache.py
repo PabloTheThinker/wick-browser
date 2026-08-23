@@ -31,6 +31,7 @@ class TestObserveCache(unittest.TestCase):
                 wait_ms=1200,
                 session="default",
                 mode="snap",
+                profile="default",
             )
             observe_cache.put(key, {"ok": True, "url": "https://example.com/", "excerpt": "hi"})
             hit = observe_cache.get(key)
@@ -56,6 +57,25 @@ class TestObserveCache(unittest.TestCase):
             )
             observe_cache.put(key, {"ok": True})
             self.assertIsNone(observe_cache.get(key))
+
+    def test_profile_changes_cache_key(self):
+        a = observe_cache.cache_key(
+            url="https://example.com/",
+            fast=True,
+            wait_ms=800,
+            session="default",
+            mode="snap",
+            profile="micro",
+        )
+        b = observe_cache.cache_key(
+            url="https://example.com/",
+            fast=True,
+            wait_ms=800,
+            session="default",
+            mode="snap",
+            profile="full",
+        )
+        self.assertNotEqual(a, b)
 
 
 if __name__ == "__main__":

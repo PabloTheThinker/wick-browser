@@ -55,3 +55,76 @@ def test_lp_fetch_honors_allow_hosts(monkeypatch):
     denied = wick.lp_fetch("https://evil.test/")
     assert denied["ok"] is False
     assert denied["error"] == "host_not_allowed"
+
+
+TREE = "1 document 'Example Domain'\n2 [i] link 'More information'\n3 heading 'Example Domain'\n"
+
+
+def test_gather_snap_micro_skips_markdown(monkeypatch):
+    calls: list[str] = []
+
+    def fake_fetch(url, dump="markdown", **_kw):
+        calls.append(dump)
+        return {
+            "ok": True,
+            "content": TREE,
+            "ms": 12,
+            "chars": len(TREE),
+            "url": url,
+            "http_ok": True,
+            "http_status": 200,
+        }
+
+    monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
+    monkeypatch.setattr(wick, "wick_observe_cache", None)
+    out = wick._gather_snap("https://example.com/", profile="micro")
+    assert out["ok"] is True
+    assert out.get("tree_only") is True
+    assert calls == ["semantic_tree_text"]
+    assert out.get("title") == "Example Domain"
+    assert out.get("element_count", 0) >= 1
+    assert out["timing"]["profile"] == "micro"
+    assert out["timing"]["parallel"] is False
+
+
+def test_gather_snap_default_fetches_tree_and_markdown(monkeypatch):
+    calls: list[str] = []
+
+    def fake_fetch(url, dump="markdown", **_kw):
+        calls.append(dump)
+        body = TREE if dump == "semantic_tree_text" else "# Example Domain\n\n[More information](https://example.com/info)"
+        return {
+            "ok": True,
+            "content": body,
+            "ms": 15,
+            "chars": len(body),
+            "url": url,
+            "http_ok": True,
+            "http_status": 200,
+        }
+
+    monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
+    monkeypatch.setattr(wick, "wick_observe_cache", None)
+    out = wick._gather_snap("https://example.com/", profile="default")
+    assert out["ok"] is True
+    assert set(calls) == {"semantic_tree_text", "markdown"}
+    assert out["timing"]["parallel"] is True
+    assert out["link_count"] >= 1
+    assert "More information" in (out.get("excerpt") or "")
+
+
+def test_snap_many_payload_bounded(monkeypatch):
+    monkeypatch.setattr(
+        wick,
+        "snap_payload",
+        lambda u, **_kw: {"ok": True, "url": u, "title": "Example Domain"},
+    )
+    out = wick.snap_many_payload(
+        ["https://example.com/", "https://example.com/about"],
+        profile="micro",
+        concurrency=2,
+    )
+    assert out["ok"] is True
+    assert out["count"] == 2
+    assert out["concurrency"] == 2
+    assert out["mode"] == "agent_snap_many"

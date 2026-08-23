@@ -11,9 +11,9 @@ Scope constraints for this doc:
 
 ## 0) Status as of 0.9 (this branch)
 
-Shipped since this brief was written: origin-bound vault + `act login`, ephemeral sessions, capability profiles, `WICK_ALLOW_HOSTS`, unified SSRF on both engines, `untrusted_content` on observe, `wick tools` + `wick rpc stdio`, computer-use (`cu` / `click_n` / `click_xy` / `type`), structured action errors, and `--expect-url-fragment` / `--expect-element`. Chromium fixture tests drive a local page through `cu` → `type_n` → `click_n` → `wait_text`.
+Shipped since this brief was written: origin-bound vault + `act login`, ephemeral sessions, capability profiles, `WICK_ALLOW_HOSTS`, unified SSRF on both engines, `untrusted_content` on observe, `wick tools` + `wick rpc stdio`, `wick mcp` (Hermes / Claude / Cursor), snapshot profiles (`micro|default|full`), parallel `snap-many`, snap `timing` breakdowns, computer-use (`cu` / `click_n` / `click_xy` / `type`), structured action errors, and `--expect-url-fragment` / `--expect-element`. Chromium fixture tests drive a local page through `cu` → `type_n` → `click_n` → `wait_text`.
 
-Still open from the original P0/P1 list: snapshot profiles (`micro|default|full`), `WICK_BLOCK_HOSTS` / `shields --policy`, parallel `snap-many`, richer timing breakdowns.
+Still open from the original P0/P1 list: `WICK_BLOCK_HOSTS` / `shields --policy`.
 
 ## 1) Where Wick Stands Today (0.6.1 Baseline)
 

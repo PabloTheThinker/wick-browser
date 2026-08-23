@@ -1,0 +1,11 @@
+# Hermes Agent ↔ Wick MCP (copy into ~/.hermes/config.yaml under mcp_servers).
+# Examples stay on example.com. Tighten WICK_ALLOW_HOSTS for real jobs.
+mcp_servers:
+  wick:
+    command: wick
+    args: [mcp]
+    env:
+      WICK_PROFILE: safe-act
+      WICK_SNAP_PROFILE: default
+      WICK_ALLOW_HOSTS: example.com
+    timeout: 120

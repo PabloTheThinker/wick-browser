@@ -28,14 +28,17 @@ Agent
 Primary situation report. Prefer this over dumping full markdown every turn.
 
 ```bash
-wick snap https://example.com/ --fast
+wick snap https://example.com/ --profile micro    # tree only (Hermes first look)
+wick snap https://example.com/ --fast             # tree + markdown in parallel
 ```
 
 Returns one JSON object with:
 
 - `title`, `excerpt`, `links[]`
 - `elements[]` — interactive targets with `hint` selectors
-- `http_ok`, timings (`ms`)
+- `http_ok`, `timing` (`total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`)
+
+`--profile micro|default|full` sets wait + field budgets. `micro` skips the markdown fetch. `WICK_SNAP_PROFILE` applies when `--profile` is omitted. `wick snap-many URL URL…` observes several pages with bounded concurrency (default `micro`).
 
 Example element:
 
@@ -43,7 +46,7 @@ Example element:
 {"id": 12, "role": "link", "name": "More information", "hint": "role=link[name=\"More information\"]", "interactive": true}
 ```
 
-Use `--fast` for agent loops (`domcontentloaded` + short wait).
+Use `--profile micro` or `--fast` for agent loops.
 
 ## Plan — `wick plan` (new in 0.6.1)
 

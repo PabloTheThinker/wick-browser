@@ -58,6 +58,7 @@ def test_tools_export_shape():
         "wick_session",
         "wick_elements",
         "wick_vault",
+        "wick_snap_many",
     ):
         assert expected in names
     snap = next(t for t in tools if t["function"]["name"] == "wick_snap")
@@ -65,6 +66,7 @@ def test_tools_export_shape():
     params = snap["function"]["parameters"]
     assert params["type"] == "object"
     assert "url" in params["properties"]
+    assert "profile" in params["properties"]
     assert params["required"] == ["url"]
 
 
@@ -110,6 +112,47 @@ def test_rpc_version_one_shot():
     assert out["id"] == "t1"
     assert out["ok"] is True
     assert out["version"] == "0.9.0"
+
+
+def test_mcp_initialize_once():
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WICK),
+            "mcp",
+            "--once",
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.strip())
+    assert out["jsonrpc"] == "2.0"
+    assert out["id"] == 1
+    assert out["result"]["serverInfo"]["name"] == "wick"
+    assert "tools" in out["result"]["capabilities"]
+
+
+def test_mcp_tools_list_short_names():
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WICK),
+            "mcp",
+            "--once",
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout.strip())
+    names = {t["name"] for t in out["result"]["tools"]}
+    for expected in ("snap", "plan", "ask", "act", "vault", "snap_many"):
+        assert expected in names
 
 
 def test_observe_security_annotate():

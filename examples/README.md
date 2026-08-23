@@ -13,6 +13,7 @@ A playbook is a JSON list of steps. Known actions run; **unknown actions are sof
 
 - `playbook.json` — minimal light + Chromium mix: `open`, `links`, `goto`, tabs, PDF.
 - `agent-loop.json` — the same shape with inline notes describing the snap → plan → ask → act flow.
+- `hermes.yaml` — Hermes Agent MCP snippet (`wick mcp`, `WICK_PROFILE=safe-act`). Copy under `mcp_servers` in `~/.hermes/config.yaml`. See [docs/HERMES.md](../docs/HERMES.md).
 
 ## The plan-ask flow
 
