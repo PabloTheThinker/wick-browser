@@ -1094,6 +1094,20 @@ def set_entry(
             if k in ("name",):
                 continue
             ent[str(k)] = str(v)
+    if ent.get("passkey_private_key"):
+        rid = str(ent.get("passkey_rpid") or "")
+        if not rid:
+            return {"ok": False, "error": "missing_rpid"}
+        pk_fields = {
+            k: str(ent.get(k) or "")
+            for k in _passkey_field_names()
+            if k in ent and ent.get(k) is not None
+        }
+        sealed_fields, seal_err = _seal_passkey_fields(name, rid, pk_fields)
+        if seal_err:
+            return seal_err
+        ent.pop("passkey_private_key", None)
+        ent.update(sealed_fields)
     meta_keys = {"url", "notes", "tags", "updated", "username", "allow_subdomains"}
     if "password" not in ent and not any(k not in meta_keys for k in ent):
         return {"ok": False, "error": "nothing_to_store"}
@@ -1537,7 +1551,7 @@ def _seal_passkey_fields(
     try:
         import hsm as wick_hsm
     except Exception:
-        return fields, None
+        return fields, {"ok": False, "error": "hsm_module_missing", "hsm": False}
     sealed = wick_hsm.wrap_private_key(priv, name=name, rp_id=rp_id)
     if not sealed.get("ok"):
         return fields, {
@@ -1649,17 +1663,14 @@ def export_passkey_for_cdp(name: str, page_url: str) -> dict[str, Any]:
         return {"ok": False, "error": "passkey_module_missing"}
     try:
         import hsm as wick_hsm
-
-        if wick_hsm.require_hsm() and not wick_hsm.probe().get("hsm"):
-            return {
-                "ok": False,
-                "error": "hsm_required",
-                "hint": "No TPM/PKCS#11 token on this host. Unset WICK_PASSKEY_REQUIRE_HSM to export a filewrap key.",
-            }
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}
     except Exception:
-        pass
+        return {"ok": False, "error": "hsm_module_missing"}
+    if wick_hsm.require_hsm() and not wick_hsm.hardware_seal_available():
+        return {
+            "ok": False,
+            "error": "hsm_required",
+            "hint": "No TPM/PKCS#11 seal path in this build. Unset WICK_PASSKEY_REQUIRE_HSM to export a filewrap key.",
+        }
     try:
         ensure_local_key()
         store = _read_store()

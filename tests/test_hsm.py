@@ -35,6 +35,8 @@ class TestHsmProbe(HsmCase):
         self.assertIn("tpm", p)
         self.assertIn("pkcs11", p)
         self.assertFalse(p["hsm"])
+        self.assertFalse(p["hardware_seal"])
+        self.assertFalse(hsm.hardware_seal_available())
         self.assertFalse(p["tpm"]["available"])
         self.assertIn(p["recommended"], ("filewrap", "tpm2", "pkcs11"))
         # This cloud image has no /dev/tpmrm0.
@@ -53,6 +55,7 @@ class TestFilewrapSeal(HsmCase):
         self.assertTrue(sealed["ok"])
         self.assertEqual(sealed["backend"], "filewrap")
         self.assertFalse(sealed["hsm"])
+        self.assertNotEqual(sealed["backend"], "tpm2")
         self.assertNotIn("pkcs8", str(sealed.get("blob")))
         opened = hsm.unwrap(sealed["blob"], aad=b"example.com|demo")
         self.assertEqual(opened, raw)
@@ -65,6 +68,16 @@ class TestFilewrapSeal(HsmCase):
         key = Path(self._tmp.name) / "vault" / "passkey.wrap"
         self.assertTrue(key.is_file())
         self.assertEqual(oct(key.stat().st_mode & 0o777), "0o600")
+
+    def test_wrap_never_claims_hardware_backend(self):
+        sealed = hsm.wrap(b"abc", aad=b"aad")
+        self.assertTrue(sealed["ok"])
+        self.assertEqual(sealed["backend"], "filewrap")
+        self.assertFalse(sealed["hsm"])
+        st = hsm.status()
+        self.assertFalse(st["hsm"])
+        self.assertEqual(st["seal"], "filewrap")
+        self.assertFalse(st["hardware_seal"])
 
     def test_require_hsm_refuses_filewrap(self):
         os.environ["WICK_PASSKEY_REQUIRE_HSM"] = "1"
@@ -106,6 +119,28 @@ class TestVaultPasskeySeal(HsmCase):
         self.assertFalse(denied["ok"])
         self.assertEqual(denied["error"], "hsm_required")
         self.assertNotIn("privateKey", json.dumps(denied))
+
+    def test_set_entry_seals_raw_pkcs8_field(self):
+        import json
+
+        vault = _load_vault()
+        vault.ensure_local_key()
+        raw_key = "dGVzdC1wa2NzOC1ieXRlcw"
+        out = vault.set_entry(
+            "manual",
+            url="https://example.com/login",
+            username="agent",
+            fields={"passkey_rpid": "example.com", "passkey_private_key": raw_key},
+        )
+        self.assertTrue(out["ok"], out)
+        raw = (Path(self._tmp.name) / "vault" / "store.enc").read_text(encoding="utf-8")
+        self.assertNotIn(raw_key, raw)
+        self.assertNotIn("BEGIN PRIVATE", raw)
+        listed = vault.list_entries()
+        listed_s = json.dumps(listed)
+        self.assertNotIn("passkey_private_key", listed_s)
+        self.assertNotIn("passkey_sealed", listed_s)
+        self.assertTrue(listed["entries"][0]["has_passkey"])
 
     def test_require_hsm_blocks_create(self):
         os.environ["WICK_PASSKEY_REQUIRE_HSM"] = "1"

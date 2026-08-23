@@ -342,6 +342,12 @@ _CHALLENGE_HALT_NOW = frozenset(
         "fill",
         "select",
         "check",
+        "press",
+        "key",
+        "drag",
+        "move",
+        "hover",
+        "scroll_xy",
         "eval",
         "download",
     }

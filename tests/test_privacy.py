@@ -38,6 +38,17 @@ class TestPrivacyGuards(unittest.TestCase):
         # We reduce entropy; we do not spoof another browser's UA.
         self.assertNotIn("--user-agent=", joined)
 
+    def test_disable_features_merge_keeps_one_flag(self):
+        merged = privacy.merge_chrome_args(
+            ["--disable-features=Translate,BackForwardCache", "--no-pings"],
+            privacy.chrome_privacy_args(),
+        )
+        feats = [a for a in merged if a.startswith("--disable-features=")]
+        self.assertEqual(len(feats), 1)
+        self.assertIn("Translate", feats[0])
+        self.assertIn("UserAgentClientHint", feats[0])
+        self.assertNotIn("--user-agent=", " ".join(merged))
+
     def test_fingerprint_probes_reported(self):
         probes = privacy.fingerprint_probes(
             url="https://example.com/",

@@ -63,29 +63,35 @@ def probe() -> dict[str, Any]:
         )
         if Path(p).is_file()
     ]
-    # p11-kit-trust is a CA store, not a key token — do not count it as HSM.
-    hardware = bool(tpm_dev) or bool(pkcs11_mods)
-    recommended = "filewrap"
-    if tpm_dev and tpm_tools:
-        recommended = "tpm2"
-    elif pkcs11_mods:
-        recommended = "pkcs11"
+    # Inventory only. A device node or .so on disk is not a usable token,
+    # and this build never seals with TPM2/PKCS#11 — only filewrap.
     return {
-        "hsm": hardware,
+        "hsm": False,
+        "hardware_seal": False,
         "tpm": {
             "available": bool(tpm_dev),
             "device": tpm_dev,
             "tools": tpm_tools,
+            "used": False,
         },
         "pkcs11": {
-            "available": bool(pkcs11_mods),
+            "available": False,
             "modules": pkcs11_mods,
-            "note": "p11-kit-trust is a CA store, not counted",
+            "used": False,
+            "note": "module file is not a token; p11-kit-trust is a CA store; this build does not use PKCS#11",
         },
-        "recommended": recommended,
+        "recommended": "filewrap",
         "filewrap": True,
         "audited": False,
     }
+
+
+def hardware_seal_available() -> bool:
+    """True only if this process can seal with a TPM/PKCS#11 token.
+
+    This build has no TPM2 unseal or PKCS#11 wrap path. Never claim hsm.
+    """
+    return False
 
 
 def _ensure_wrap_key() -> bytes:
@@ -113,11 +119,11 @@ def _ensure_wrap_key() -> bytes:
 def wrap(plaintext: bytes, *, aad: bytes) -> dict[str, Any]:
     """Seal passkey bytes. Hardware required only when require_hsm() is on."""
     info = probe()
-    if require_hsm() and not info["hsm"]:
+    if require_hsm() and not hardware_seal_available():
         return {
             "ok": False,
             "error": "hsm_required",
-            "hint": "No TPM/PKCS#11 token on this host. Unset WICK_PASSKEY_REQUIRE_HSM to use filewrap.",
+            "hint": "No TPM/PKCS#11 seal path in this build. Unset WICK_PASSKEY_REQUIRE_HSM to use filewrap.",
             "probe": info,
         }
     if vcrypto is None or not vcrypto.available():
@@ -127,14 +133,10 @@ def wrap(plaintext: bytes, *, aad: bytes) -> dict[str, Any]:
         blob = vcrypto.seal(key, plaintext, aad)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
-    backend = "tpm2" if info["recommended"] == "tpm2" and info["hsm"] else "filewrap"
-    # We only *use* TPM when we actually sealed with it. This host uses filewrap.
-    if not info["hsm"]:
-        backend = "filewrap"
     return {
         "ok": True,
-        "backend": backend,
-        "hsm": bool(info["hsm"] and backend != "filewrap"),
+        "backend": "filewrap",
+        "hsm": False,
         "blob": blob,
         "alg": "aes-256-gcm",
     }
@@ -170,10 +172,11 @@ def unwrap_private_key(blob: Any, *, name: str, rp_id: str) -> str:
 def status() -> dict[str, Any]:
     info = probe()
     return {
-        "hsm": bool(info["hsm"]),
+        "hsm": False,
         "tpm": bool(info["tpm"]["available"]),
-        "pkcs11": bool(info["pkcs11"]["available"]),
-        "seal": info["recommended"] if info["hsm"] else "filewrap",
+        "pkcs11": False,
+        "seal": "filewrap",
+        "hardware_seal": False,
         "require_hsm": require_hsm(),
         "probe": info,
         "audited": False,

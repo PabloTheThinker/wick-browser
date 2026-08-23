@@ -73,6 +73,28 @@ def chrome_privacy_args() -> list[str]:
     return args
 
 
+def merge_chrome_args(base: list[str], extra: list[str]) -> list[str]:
+    """Fold extra flags into base. Multiple --disable-features= become one."""
+    feats: list[str] = []
+    out: list[str] = []
+
+    def take(flag: str) -> None:
+        if flag.startswith("--disable-features="):
+            for part in flag.split("=", 1)[1].split(","):
+                name = part.strip()
+                if name and name not in feats:
+                    feats.append(name)
+            return
+        if flag not in out:
+            out.append(flag)
+
+    for flag in list(base or []) + list(extra or []):
+        take(flag)
+    if feats:
+        out.append("--disable-features=" + ",".join(feats))
+    return out
+
+
 def fingerprint_probes(
     *,
     url: str | None = None,

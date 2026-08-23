@@ -127,9 +127,9 @@ def main() -> int:
         try:
             import privacy as wick_privacy
 
-            for flag in wick_privacy.chrome_privacy_args():
-                if flag not in launch_args:
-                    launch_args.append(flag)
+            launch_args = wick_privacy.merge_chrome_args(
+                launch_args, wick_privacy.chrome_privacy_args()
+            )
         except Exception:
             pass
         extra_headers = {}
