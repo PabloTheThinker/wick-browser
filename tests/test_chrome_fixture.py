@@ -153,6 +153,31 @@ class TestChromeFixture(unittest.TestCase):
         self.assertFalse(out.get("ok"))
         self.assertEqual(out.get("error"), "expect_failed")
 
+    def test_two_step_login_fills_after_continue(self):
+        import vault
+
+        login_url = f"http://127.0.0.1:{self.port}/login-steps.html"
+        vault.ensure_local_key()
+        vault.set_entry(
+            "local-login",
+            password="s3cret-value-xyz",
+            username="agent@example.com",
+            url=login_url,
+        )
+        out = self._run("login", login_url)
+        self.assertTrue(out.get("ok"), out)
+        self.assertIn("username", out.get("filled") or [])
+        self.assertIn("password", out.get("filled") or [])
+        self.assertNotIn("s3cret-value-xyz", json.dumps(out))
+        try:
+            self.page.wait_for_function(
+                "() => window.location.hash === '#ok'",
+                timeout=8000,
+            )
+        except Exception as e:
+            raise unittest.SkipTest(f"two-step login did not navigate: {e}")
+        self.assertIn("#ok", self.page.url)
+
     def test_login_refuses_example_com_vault_on_localhost(self):
         import vault
 

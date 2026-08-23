@@ -14,14 +14,22 @@ if str(_LIB) not in sys.path:
 
 import approval  # noqa: E402
 
+_ENV = (
+    "WICK_REQUIRE_APPROVAL",
+    "WICK_APPROVE",
+    "WICK_APPROVE_ONCE",
+    "WICK_HOME",
+    "WICK_POLICY",
+)
+
 
 class TestApproval(unittest.TestCase):
     def setUp(self):
-        for k in ("WICK_REQUIRE_APPROVAL", "WICK_APPROVE", "WICK_APPROVE_ONCE", "WICK_HOME"):
+        for k in _ENV:
             os.environ.pop(k, None)
 
     def tearDown(self):
-        for k in ("WICK_REQUIRE_APPROVAL", "WICK_APPROVE", "WICK_APPROVE_ONCE", "WICK_HOME"):
+        for k in _ENV:
             os.environ.pop(k, None)
 
     def test_off_by_default(self):

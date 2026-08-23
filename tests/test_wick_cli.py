@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -128,3 +129,21 @@ def test_snap_many_payload_bounded(monkeypatch):
     assert out["count"] == 2
     assert out["concurrency"] == 2
     assert out["mode"] == "agent_snap_many"
+
+
+def test_shields_policy_flag(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("WICK_HOME", str(tmp_path))
+    monkeypatch.delenv("WICK_POLICY", raising=False)
+    monkeypatch.delenv("WICK_ALLOW_HOSTS", raising=False)
+    monkeypatch.delenv("WICK_BLOCK_HOSTS", raising=False)
+    monkeypatch.delenv("WICK_PROFILE", raising=False)
+    dest = tmp_path / "policy.json"
+    dest.write_text('{"block_hosts": ["evil.test"], "profile": "safe-act"}\n', encoding="utf-8")
+    monkeypatch.setenv("WICK_POLICY", str(dest))
+    ns = type("NS", (), {"update": False, "json_only": True, "policy": True, "policy_check": None, "policy_write": None})()
+    rc = wick.cmd_shields(ns)
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True
+    assert "evil.test" in out["policy"]["block_hosts"]
+    assert out["policy"]["profile"] == "safe-act"

@@ -18,6 +18,10 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 - Playbook action `login`
 - Ephemeral sessions: `wick session new NAME --ephemeral --ttl 1800 --owner agent`
 - `wick session promote` / `save` keeps cookies; `drop` / `sweep` deletes unpromoted TTL sessions
+- `wick session export` redacts cookie values; `--reveal` (full-act) writes values; redacted exports are not importable
+- Policy file: `WICK_POLICY` / `$WICK_HOME/policy.json` and `wick shields --policy`
+- `WICK_VAULT_REQUIRE_GRANT` / policy `vault_require_grant` — empty grants deny resolve/fill
+- Two-step login: retry fill + Continue/Next when the password field is not visible yet
 - Capability profiles: `WICK_PROFILE=observe-only|safe-act|full-act`
 - Outbound allowlist: `WICK_ALLOW_HOSTS=example.com,.github.com`
 - Outbound denylist: `WICK_BLOCK_HOSTS` (deny wins)

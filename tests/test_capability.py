@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,18 +14,25 @@ if str(_LIB) not in sys.path:
 
 import capability  # noqa: E402
 
+_ENV = ("WICK_PROFILE", "WICK_ALLOW_HOSTS", "WICK_BLOCK_HOSTS", "WICK_POLICY", "WICK_HOME")
 
-class TestProfiles(unittest.TestCase):
+
+class EnvCase(unittest.TestCase):
+    """Env-only expectations: no policy file, throwaway WICK_HOME."""
+
     def setUp(self):
-        os.environ.pop("WICK_PROFILE", None)
-        os.environ.pop("WICK_ALLOW_HOSTS", None)
-        os.environ.pop("WICK_BLOCK_HOSTS", None)
+        for k in _ENV:
+            os.environ.pop(k, None)
+        self._tmp = tempfile.TemporaryDirectory(prefix="wick-cap-")
+        os.environ["WICK_HOME"] = self._tmp.name
 
     def tearDown(self):
-        os.environ.pop("WICK_PROFILE", None)
-        os.environ.pop("WICK_ALLOW_HOSTS", None)
-        os.environ.pop("WICK_BLOCK_HOSTS", None)
+        for k in _ENV:
+            os.environ.pop(k, None)
+        self._tmp.cleanup()
 
+
+class TestProfiles(EnvCase):
     def test_default_is_full(self):
         self.assertEqual(capability.current_profile(), "full-act")
         self.assertIsNone(capability.deny("act", action="login"))
@@ -61,16 +69,20 @@ class TestProfiles(unittest.TestCase):
         os.environ["WICK_PROFILE"] = "observe"
         self.assertEqual(capability.current_profile(), "observe-only")
 
+    def test_session_export_reveal_needs_full_act(self):
+        os.environ["WICK_PROFILE"] = "safe-act"
+        self.assertIsNone(capability.deny("session", session_action="export"))
+        self.assertIsNotNone(capability.deny("session", session_action="export-reveal"))
+        self.assertIsNotNone(capability.deny("session", session_action="import"))
+        os.environ["WICK_PROFILE"] = "full-act"
+        self.assertIsNone(capability.deny("session", session_action="export-reveal"))
+        self.assertIsNone(capability.deny("session", session_action="import"))
+        os.environ["WICK_PROFILE"] = "observe-only"
+        self.assertIsNone(capability.deny("session", session_action="export"))
+        self.assertIsNotNone(capability.deny("session", session_action="new"))
 
-class TestAllowHosts(unittest.TestCase):
-    def setUp(self):
-        os.environ.pop("WICK_ALLOW_HOSTS", None)
-        os.environ.pop("WICK_BLOCK_HOSTS", None)
 
-    def tearDown(self):
-        os.environ.pop("WICK_ALLOW_HOSTS", None)
-        os.environ.pop("WICK_BLOCK_HOSTS", None)
-
+class TestAllowHosts(EnvCase):
     def test_unrestricted_by_default(self):
         ok, reason = capability.host_allowed("https://evil.test/")
         self.assertTrue(ok)

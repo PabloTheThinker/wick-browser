@@ -13,7 +13,7 @@ Scope constraints for this doc:
 
 Shipped since this brief was written: origin-bound vault + `act login`, ephemeral sessions, capability profiles, `WICK_ALLOW_HOSTS` + **`WICK_BLOCK_HOSTS` (deny wins)**, unified SSRF on both engines, `untrusted_content` on observe, `wick tools` + `wick rpc stdio`, `wick mcp` (Hermes / Claude / Cursor), snapshot profiles (`micro|default|full`), parallel `snap-many`, snap `timing` breakdowns, computer-use (`cu` / `click_n` / `click_xy` / `type`), structured action errors, `--expect-url-fragment` / `--expect-element`, harness **`wick approve`** for login/fill/passkey, and **vault-backed passkeys** via Chromium's CDP virtual authenticator. Chromium fixture tests drive a local page through `cu` → `type_n` → `click_n` → `wait_text` and a localhost WebAuthn assert.
 
-Still open from the original P0/P1 list: `shields --policy` as a file-shaped overlay on the env lists. Independent crypto audit is **not** claimed.
+Shipped on this branch: `wick shields --policy` (file overlay on allow/deny + harness knobs), `WICK_VAULT_REQUIRE_GRANT`, redacted `wick session export` / import, and two-step login retry. Independent crypto audit is **not** claimed.
 
 ## 1) Where Wick Stands Today (0.6.1 Baseline)
 

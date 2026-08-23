@@ -647,10 +647,24 @@ def _active_grants() -> list[dict[str, Any]]:
     return out
 
 
+def _require_grant() -> bool:
+    """True when empty grants mean deny (policy / WICK_VAULT_REQUIRE_GRANT)."""
+    pol = _sibling_module("policy")
+    if pol is not None:
+        try:
+            return bool(pol.vault_require_grant())
+        except Exception:
+            pass
+    raw = (os.environ.get("WICK_VAULT_REQUIRE_GRANT") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _grant_allows(url: str | None) -> tuple[bool, str]:
-    """True when no grants are active, or one covers this URL."""
+    """True when no grants are active (unless require-grant), or one covers this URL."""
     grants = _active_grants()
     if not grants:
+        if _require_grant():
+            return False, "missing_grant"
         return True, "no_grants"
     u = (url or "").strip()
     if not u:
@@ -801,14 +815,19 @@ def session_status() -> dict[str, Any]:
     grants = _active_grants()
     mode = "filekey" if kdf_mode() == "filekey" else "passphrase"
     unlocked = bool(_load_master()) or _passphrase() is not None or _session_vault_key() is not None
+    standing = mode == "filekey" and (
+        _paths()["key"].is_file() or bool(os.environ.get("WICK_VAULT_KEY"))
+    )
     return {
         "active": bool(sess),
         "mode": mode,
+        "standing_key": standing,
         "exp": int((sess or {}).get("exp") or 0) or None,
         "expires": _iso(int(sess["exp"])) if sess and sess.get("exp") else None,
         "unlocked": unlocked,
         "grants": [{"origin": str(g.get("origin")), "expires": _iso(int(g.get("exp") or 0))} for g in grants],
         "grant_count": len(grants),
+        "require_grant": _require_grant(),
         "relock_after_fill": os.environ.get("WICK_VAULT_RELOCK_AFTER_FILL") == "1",
         "lock_ttl": _lock_ttl(),
     }
@@ -828,6 +847,8 @@ def crypto_info() -> dict[str, Any]:
         "legacy_read_only": LEGACY_VAULT_FORMAT,
         "migrate_on_write": fmt == LEGACY_VAULT_FORMAT,
         "audited": False,
+        "hsm": False,
+        "sync": False,
     }
 
 
@@ -886,8 +907,12 @@ def backends_status() -> dict[str, Any]:
             "kdf": info["kdf"],
             "hierarchy": info["hierarchy"],
             "key_file": bool(local_key),
+            "standing_key": bool(sess.get("standing_key")),
             "migrate_on_write": info["migrate_on_write"],
             "session": sess,
+            "audited": False,
+            "hsm": False,
+            "sync": False,
             "not_claimed": "no Proton cloud sync, no third-party audit, no HSM",
         },
         "proton_pass": {
@@ -1216,11 +1241,10 @@ def _resolve_local(body: str, *, reason: str) -> dict[str, Any]:
             name, field = parts[0], parts[1]
         else:
             raise ValueError("not_found")
-    if _active_grants():
-        allowed, why = _grant_allows(str(ent.get("url") or ""))
-        if not allowed:
-            _audit("resolve_denied", ref=f"vault://{name}/{field}", ok=False, detail=f"grant:{why}")
-            raise ValueError(f"grant_required:{why}")
+    allowed, why = _grant_allows(str(ent.get("url") or ""))
+    if not allowed:
+        _audit("resolve_denied", ref=f"vault://{name}/{field}", ok=False, detail=f"grant:{why}")
+        raise ValueError(f"grant_required:{why}")
     if field in ("otp", "totp_code"):
         secret = _entry_totp_secret(ent)
         if not secret:
@@ -1394,8 +1418,7 @@ def resolve_for_fill(
         raise ValueError(r.get("error") or "resolve_failed")
     origin_ok = True
     origin_reason = "not_checked"
-    grants = _active_grants()
-    if grants and r.get("backend") == "local":
+    if r.get("backend") == "local":
         allowed, why = _grant_allows(page_url)
         if not allowed:
             _audit("resolve_denied", ref=r.get("ref") or text, ok=False, detail=f"grant:{why}")
@@ -1438,7 +1461,7 @@ def resolve_for_fill(
         "chars": r.get("chars"),
         "origin_ok": origin_ok,
         "origin_reason": origin_reason,
-        "granted": bool(grants),
+        "granted": bool(_active_grants()),
         "relocked": relocked,
     }
 
@@ -1589,16 +1612,14 @@ def export_passkey_for_cdp(name: str, page_url: str) -> dict[str, Any]:
     cred = wick_passkey.from_entry(ent)
     if cred is None:
         return {"ok": False, "error": "no_passkey", "name": name}
-    grants = _active_grants()
-    if grants:
-        allowed, why = _grant_allows(page_url)
-        if not allowed:
-            _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail=f"grant:{why}")
-            return {"ok": False, "error": f"grant_required:{why}"}
-        saved_ok, saved_why = _grant_allows(str(ent.get("url") or ""))
-        if not saved_ok:
-            _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail=f"grant:{saved_why}")
-            return {"ok": False, "error": f"grant_required:{saved_why}"}
+    allowed, why = _grant_allows(page_url)
+    if not allowed:
+        _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail=f"grant:{why}")
+        return {"ok": False, "error": f"grant_required:{why}"}
+    saved_ok, saved_why = _grant_allows(str(ent.get("url") or ""))
+    if not saved_ok:
+        _audit("passkey_denied", ref=f"vault://{name}/passkey", ok=False, detail=f"grant:{saved_why}")
+        return {"ok": False, "error": f"grant_required:{saved_why}"}
     saved = ent.get("url")
     if saved and wick_origins is not None:
         origin_ok, origin_reason, _score = wick_origins.origins_compatible(
@@ -1706,6 +1727,18 @@ def doctor() -> dict[str, Any]:
     checks.append({"name": "key_hierarchy", "ok": True, "detail": info["hierarchy"]})
     checks.append({"name": "proton_pass_cli", "ok": bool(st["proton_pass"]["available"])})
     checks.append({"name": "keepassxc_cli", "ok": bool(st["keepassxc"]["available"])})
+    sess = session_status()
+    checks.append(
+        {
+            "name": "standing_key",
+            "ok": True,
+            "present": bool(sess.get("standing_key")),
+            "detail": "filekey on disk — not a locked passphrase vault" if sess.get("standing_key") else "passphrase_or_missing",
+        }
+    )
+    checks.append({"name": "third_party_audit", "ok": True, "audited": False})
+    checks.append({"name": "hsm", "ok": True, "present": False})
+    checks.append({"name": "cloud_sync", "ok": True, "present": False})
     required = ("vault_dir_0700", "local_backend", "aead_aes_256_gcm")
     return {
         "ok": all(c.get("ok") for c in checks if c["name"] in required),
@@ -1715,8 +1748,13 @@ def doctor() -> dict[str, Any]:
         "aead": info["aead"],
         "kdf": info["kdf"],
         "hierarchy": info["hierarchy"],
+        "standing_key": bool(sess.get("standing_key")),
+        "audited": False,
+        "hsm": False,
+        "sync": False,
+        "require_grant": bool(sess.get("require_grant")),
         "crypto": info,
-        "session": session_status(),
+        "session": sess,
         "checks": checks,
         "backends": st,
     }

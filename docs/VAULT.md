@@ -111,7 +111,7 @@ Same primitive class as Proton Pass and Bitwarden, run locally. Full spec: [VAUL
 
 Entry **names** are identifiers (`vault://demo`); nothing else is cleartext on disk — not even the saved URL. A failed GCM unwrap returns `bad_mac_or_key`, and after 8 failures the vault refuses for 30 seconds (`vault_locked_cooldown`).
 
-`wick vault doctor` / `status` report `format`, `aead`, `kdf`, and `hierarchy`.
+`wick vault doctor` / `status` report `format`, `aead`, `kdf`, `hierarchy`, plus honesty flags: `standing_key`, `audited: false`, `hsm: false`, `sync: false`.
 
 `wickvault1` (SHA-256 counter XOR + HMAC, scrypt n=2^14) is **read-only**: an old store opens once and the next write rewrites it as wickvault2.
 
@@ -125,10 +125,11 @@ These three need `WICK_PROFILE=full-act`; `status` / `list` / `match` / `suggest
 | `WICK_VAULT_KEY` | File-key material (HKDF input, not used raw as an AES key) |
 | `WICK_VAULT_LOCK_TTL` | Session seconds, default `900` |
 | `WICK_VAULT_RELOCK_AFTER_FILL=1` | `lock()` right after a successful local fill |
+| `WICK_VAULT_REQUIRE_GRANT=1` | Empty grants deny every local resolve/fill/passkey export (`grant_required:missing_grant`) |
 
 - **File-key mode (default):** `master.key` on disk means the vault is effectively auto-unlocked. `lock` clears the session and its grants; it cannot un-know a key that is still sitting in a file.
 - **Passphrase mode:** without `WICK_VAULT_PASSPHRASE` and without a live session, `resolve` / `list` fail with `vault_locked`. `unlock` stores a short-TTL GCM wrap of the vault key next to a 32-byte session key in `session.json` (`0600`) — a TTL convenience, not a hardware keystore.
-- **Grants:** while any grant is active, local `resolve` / `resolve_for_fill` are denied unless the saved origin *and* the live page origin match a non-expired grant (`grant_required:…`). `match` / `suggest` keep returning metadata only.
+- **Grants:** while any grant is active, local `resolve` / `resolve_for_fill` are denied unless the saved origin *and* the live page origin match a non-expired grant (`grant_required:…`). `WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) also denies when **no** grant is active. `match` / `suggest` keep returning metadata only.
 
 ## Storage layout
 

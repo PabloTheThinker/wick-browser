@@ -10,12 +10,44 @@ means suffix match ('.example.com' allows app.example.com, not evilexample.com).
 Empty / unset = unrestricted (unless blocked).
 
 Host denylist (WICK_BLOCK_HOSTS): same syntax. Deny wins over the allowlist.
+
+A policy file (WICK_POLICY or $WICK_HOME/policy.json) can supply the same
+three knobs; see lib/policy.py for the merge rules. Env wins for the profile
+and the allowlist; block lists are unioned so deny always wins.
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+
+def _sibling_module(name: str) -> Any:
+    """Import a lib/ sibling whether or not lib/ is on sys.path."""
+    try:
+        return __import__(name)
+    except Exception:
+        pass
+    try:
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+
+        path = Path(__file__).resolve().parent / f"{name}.py"
+        if not path.is_file():
+            return None
+        loader = SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+wick_policy = _sibling_module("policy")
 
 PROFILES = ("observe-only", "safe-act", "full-act")
 ALIASES = {
@@ -120,12 +152,22 @@ _OBSERVE_VAULT = frozenset(
     {"status", "backends", "doctor", "list", "match", "suggest", "autofill", "init"}
 )
 _SAFE_SESSION = frozenset(
-    {"list", "new", "use", "save", "path", "drop", "sweep", "meta", "promote"}
+    {"list", "new", "use", "save", "path", "drop", "sweep", "meta", "promote", "export"}
 )
 
 
+def _policy() -> dict[str, Any]:
+    if wick_policy is None:
+        return {}
+    try:
+        return wick_policy.effective() or {}
+    except Exception:
+        return {}
+
+
 def current_profile() -> str:
-    raw = (os.environ.get("WICK_PROFILE") or "full-act").strip().lower()
+    raw = (_policy().get("profile") or os.environ.get("WICK_PROFILE") or "full-act")
+    raw = str(raw).strip().lower()
     if raw in ALIASES:
         return ALIASES[raw]
     if raw in PROFILES:
@@ -181,7 +223,13 @@ def deny(
 
     if c == "session":
         sa = (session_action or "list").strip().lower()
-        if level <= 0 and sa not in {"list", "path", "use", "meta"}:
+        if sa in {"export-reveal", "import"} and level < 2:
+            return _deny(
+                "session",
+                action=sa,
+                detail="revealed cookie export/import requires full-act",
+            )
+        if level <= 0 and sa not in {"list", "path", "use", "meta", "export"}:
             return _deny("session", action=sa, detail="observe-only can inspect sessions only")
         if sa in _SAFE_SESSION or level >= 2:
             return None
@@ -209,10 +257,16 @@ def _parse_host_list(env_name: str) -> list[str]:
 
 
 def parse_allow_hosts() -> list[str]:
+    pol = _policy()
+    if "allow_hosts" in pol:
+        return list(pol["allow_hosts"])
     return _parse_host_list("WICK_ALLOW_HOSTS")
 
 
 def parse_block_hosts() -> list[str]:
+    pol = _policy()
+    if "block_hosts" in pol:
+        return list(pol["block_hosts"])
     return _parse_host_list("WICK_BLOCK_HOSTS")
 
 
@@ -260,7 +314,8 @@ def deny_host(url: str | None) -> dict[str, Any] | None:
     ok, reason = host_allowed(url)
     if ok:
         return None
-    return {
+    pol = _policy()
+    err = {
         "ok": False,
         "product": "wick",
         "error": "host_not_allowed",
@@ -270,3 +325,6 @@ def deny_host(url: str | None) -> dict[str, Any] | None:
         "block_hosts": parse_block_hosts(),
         "hint": "WICK_BLOCK_HOSTS wins; add the host to WICK_ALLOW_HOSTS or unset the allowlist.",
     }
+    if pol.get("source") not in (None, "none"):
+        err["policy"] = pol.get("path")
+    return err

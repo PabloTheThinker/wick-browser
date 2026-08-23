@@ -172,6 +172,7 @@ wick session new job42 --ephemeral --ttl 1800 --owner recon
 export WICK_SESSION=job42
 wick snap https://example.com/
 wick session promote job42    # keep cookies; otherwise sweep/auto-drop deletes it
+wick session export job42     # redacted cookie metadata
 # wick session drop job42
 ```
 
@@ -187,7 +188,11 @@ wick session promote job42    # keep cookies; otherwise sweep/auto-drop deletes 
 | `safe-act` | observe + goto/click/cu/click_xy/type/scroll/tabs | fill, login, eval, get |
 | `full-act` (default) | everything | — |
 
-`WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts. `WICK_BLOCK_HOSTS` is a denylist with the same syntax; **deny wins**.
+`WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts. `WICK_BLOCK_HOSTS` is a denylist with the same syntax; **deny wins**. Pin the same rules in a file with `WICK_POLICY` / `$WICK_HOME/policy.json` and inspect them with `wick shields --policy`.
+
+`WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) refuses local resolve/fill until `wick vault grant --url` is active. Off by default — file-key mode still has a standing disk key.
+
+`wick session export NAME` writes cookie **names/domains/flags**, not values. `export --reveal` (full-act) includes values; importing a redacted export fails with `redacted_export_not_importable`.
 
 ## Shields
 

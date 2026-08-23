@@ -2,6 +2,7 @@
 """Ephemeral session lifecycle: new, promote, drop, sweep."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -76,6 +77,75 @@ class TestEphemeralSession(unittest.TestCase):
         self.assertIn("old", names)
         self.assertFalse((shields.SESSIONS / "old").exists())
         self.assertTrue((shields.SESSIONS / "kept").exists())
+
+
+class TestSessionExport(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self._td = tempfile.TemporaryDirectory()
+        os.environ["WICK_HOME"] = self._td.name
+        shields.HOME = Path(self._td.name)
+        shields.SHIELDS = shields.HOME / "shields"
+        shields.SESSIONS = shields.HOME / "sessions"
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _seed(self, name: str = "job") -> list[dict]:
+        shields.new_session(name)
+        load, _jar = shields.session_cookie_paths(name)
+        cookies = [
+            {
+                "name": "sid",
+                "value": "secret-cookie-value",
+                "domain": "example.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": True,
+                "sameSite": "Lax",
+            }
+        ]
+        load.write_text(json.dumps(cookies), encoding="utf-8")
+        return cookies
+
+    def test_export_redacts_values(self):
+        self._seed()
+        out = shields.export_session("job")
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["revealed"])
+        self.assertEqual(out["cookie_count"], 1)
+        cookie = out["cookies"][0]
+        self.assertEqual(cookie["name"], "sid")
+        self.assertEqual(cookie["domain"], "example.com")
+        self.assertTrue(cookie["has_value"])
+        self.assertNotIn("value", cookie)
+        blob = json.dumps(out)
+        self.assertNotIn("secret-cookie-value", blob)
+
+    def test_export_reveal_includes_values(self):
+        self._seed()
+        out = shields.export_session("job", reveal=True)
+        self.assertTrue(out["revealed"])
+        self.assertEqual(out["cookies"][0]["value"], "secret-cookie-value")
+
+    def test_import_rejects_redacted(self):
+        self._seed()
+        redacted = shields.export_session("job")
+        denied = shields.import_session("other", redacted)
+        self.assertFalse(denied["ok"])
+        self.assertEqual(denied["error"], "redacted_export_not_importable")
+
+    def test_import_revealed_writes_load(self):
+        self._seed()
+        revealed = shields.export_session("job", reveal=True)
+        out = shields.import_session("restored", revealed)
+        self.assertTrue(out["ok"], out)
+        load, _jar = shields.session_cookie_paths("restored")
+        cookies = shields.session_cookies("restored")
+        self.assertTrue(load.is_file())
+        self.assertEqual(cookies[0]["value"], "secret-cookie-value")
+        self.assertEqual(oct(load.stat().st_mode & 0o777), "0o600")
 
 
 if __name__ == "__main__":

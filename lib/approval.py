@@ -2,6 +2,8 @@
 
 Off by default. When WICK_REQUIRE_APPROVAL is set, login/fill/passkey/eval
 need an explicit approve from outside the model (env or a short-TTL file).
+A policy file (see lib/policy.py) can require the same actions; the two are
+unioned, so env cannot switch off what the file demands.
 
 A page cannot mint this token. The agent should not set WICK_APPROVE itself.
 """
@@ -17,6 +19,33 @@ SENSITIVE = frozenset(
     {"login", "fill", "passkey", "passkey_register", "eval", "download"}
 )
 DEFAULT_TTL = 300
+
+
+def _sibling_module(name: str) -> Any:
+    """Import a lib/ sibling whether or not lib/ is on sys.path."""
+    try:
+        return __import__(name)
+    except Exception:
+        pass
+    try:
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+
+        path = Path(__file__).resolve().parent / f"{name}.py"
+        if not path.is_file():
+            return None
+        loader = SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+wick_policy = _sibling_module("policy")
 
 
 def _home() -> Path:
@@ -35,13 +64,34 @@ def token_path() -> Path:
     return d / "once.json"
 
 
-def required_actions() -> set[str]:
+def _env_required() -> set[str]:
     raw = (os.environ.get("WICK_REQUIRE_APPROVAL") or "").strip().lower()
     if not raw or raw in ("0", "false", "off", "no"):
         return set()
     if raw in ("1", "true", "on", "yes", "*"):
         return set(SENSITIVE)
     return {p.strip() for p in raw.split(",") if p.strip() and p.strip() in SENSITIVE | {"*"}}
+
+
+def _policy_required() -> set[str]:
+    if wick_policy is None:
+        return set()
+    try:
+        acts = wick_policy.effective().get("require_approval") or []
+    except Exception:
+        return set()
+    out: set[str] = set()
+    for act in acts:
+        name = str(act).strip().lower()
+        if name == "*":
+            out |= set(SENSITIVE)
+        elif name in SENSITIVE:
+            out.add(name)
+    return out
+
+
+def required_actions() -> set[str]:
+    return _env_required() | _policy_required()
 
 
 def _file_actions() -> tuple[set[str], dict[str, Any] | None]:

@@ -40,6 +40,19 @@ OTP_CSS = (
     'input[name*="totp" i], input[name*="2fa" i]'
 )
 SUBMIT_CSS = 'button[type="submit"], input[type="submit"], button:not([type]), [role="button"]'
+# Two-step login: username first, then Continue/Next reveals the password field.
+STEP_RE = re.compile(r"^(continue|next|weiter|siguiente|suivant)$", re.I)
+STEP_BUTTON_NAMES = ("Continue", "Next")
+
+
+def needs_password_step(*, username_filled: bool, password_visible: bool) -> bool:
+    """True when a username was filled and the password field is not on screen yet."""
+    return bool(username_filled) and not bool(password_visible)
+
+
+def is_step_button(name: str | None) -> bool:
+    raw = (name or "").strip()
+    return bool(raw) and bool(STEP_RE.search(raw))
 
 
 def _copy_el(el: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -328,6 +328,149 @@ def session_downloads(name: str = "default") -> Path:
     return d
 
 
+_COOKIE_META_KEYS = (
+    "name",
+    "domain",
+    "path",
+    "secure",
+    "httpOnly",
+    "httponly",
+    "sameSite",
+    "samesite",
+    "expires",
+    "expiry",
+    "expirationDate",
+    "hostOnly",
+)
+
+
+def _read_cookie_list(path: Path) -> list[dict[str, Any]]:
+    """Accept a JSON list of cookie dicts, or {cookies: [...]}."""
+    if not path.is_file():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if isinstance(raw, list):
+        return [c for c in raw if isinstance(c, dict)]
+    if isinstance(raw, dict):
+        cookies = raw.get("cookies")
+        if isinstance(cookies, list):
+            return [c for c in cookies if isinstance(c, dict)]
+    return []
+
+
+def session_cookies(name: str = "default") -> list[dict[str, Any]]:
+    """Load cookies from load.json, falling back to jar.json."""
+    load, jar = session_cookie_paths(name)
+    cookies = _read_cookie_list(load)
+    if cookies:
+        return cookies
+    return _read_cookie_list(jar)
+
+
+def _redact_cookie(cookie: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in _COOKIE_META_KEYS:
+        if key in cookie:
+            dest = "httpOnly" if key.lower() == "httponly" else key
+            dest = "sameSite" if dest.lower() == "samesite" else dest
+            dest = "expires" if dest in ("expiry", "expirationDate") else dest
+            if dest not in out:
+                out[dest] = cookie[key]
+    out["has_value"] = bool(str(cookie.get("value") or cookie.get("Value") or ""))
+    return out
+
+
+def _cookie_has_value(cookie: dict[str, Any]) -> bool:
+    return "value" in cookie or "Value" in cookie
+
+
+def export_session(name: str = "default", *, reveal: bool = False) -> dict[str, Any]:
+    """Export cookies. Values are omitted unless reveal=True."""
+    safe = session_name_safe(name)
+    d = session_dir(safe)
+    if not d.is_dir():
+        return {"ok": False, "error": "not_found", "session": safe}
+    cookies = session_cookies(safe)
+    if reveal:
+        exported = list(cookies)
+    else:
+        exported = [_redact_cookie(c) for c in cookies]
+    meta = session_meta(safe)
+    return {
+        "ok": True,
+        "format": "wick-session-v1",
+        "session": safe,
+        "revealed": bool(reveal),
+        "cookie_count": len(exported),
+        "cookies": exported,
+        "meta": {
+            k: meta.get(k)
+            for k in ("name", "ephemeral", "promoted", "owner", "ttl", "created")
+        },
+    }
+
+
+def write_session_export(payload: dict[str, Any], dest: Path) -> dict[str, Any]:
+    """Write an export JSON. Revealed files are 0600."""
+    target = Path(dest).expanduser()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        if payload.get("revealed"):
+            os.chmod(tmp, 0o600)
+        tmp.replace(target)
+        if payload.get("revealed"):
+            os.chmod(target, 0o600)
+    except OSError as e:
+        return {"ok": False, "error": "write_failed", "detail": str(e), "path": str(target)}
+    mode = oct(target.stat().st_mode & 0o777) if target.is_file() else None
+    return {"ok": True, "path": str(target), "mode": mode, "revealed": bool(payload.get("revealed"))}
+
+
+def import_session(name: str, payload: Any) -> dict[str, Any]:
+    """Import a revealed export (or a bare cookie list with values) into load.json."""
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            return {"ok": False, "error": "bad_json"}
+    cookies: list[Any]
+    if isinstance(payload, list):
+        cookies = payload
+    elif isinstance(payload, dict):
+        if payload.get("revealed") is False:
+            return {"ok": False, "error": "redacted_export_not_importable"}
+        raw = payload.get("cookies")
+        if not isinstance(raw, list):
+            return {"ok": False, "error": "bad_export", "detail": "expected cookies list"}
+        cookies = raw
+    else:
+        return {"ok": False, "error": "bad_export"}
+    parsed: list[dict[str, Any]] = []
+    for item in cookies:
+        if not isinstance(item, dict):
+            return {"ok": False, "error": "bad_export", "detail": "cookie must be an object"}
+        if not _cookie_has_value(item):
+            return {"ok": False, "error": "redacted_export_not_importable"}
+        parsed.append(item)
+    safe = session_name_safe(name)
+    session_dir(safe)
+    load, _jar = session_cookie_paths(safe)
+    try:
+        load.write_text(json.dumps(parsed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.chmod(load, 0o600)
+    except OSError as e:
+        return {"ok": False, "error": "write_failed", "detail": str(e)}
+    return {"ok": True, "session": safe, "imported": len(parsed), "load": str(load)}
+
+
 def resolve_proxy() -> str | None:
     """Proxy URL for Lightpanda --http-proxy. Never log credentials."""
     for key in ("WICK_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):

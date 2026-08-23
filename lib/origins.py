@@ -3,13 +3,44 @@
 Substring URL matching is a phishing bug. Agents fill passwords only when
 scheme+host(+port) match the saved credential, with a narrow www alias and
 optional subdomain grant. HTTPS-saved logins never fill on HTTP pages.
+
+Private-network fetches stay blocked unless WICK_ALLOW_PRIVATE=1 or a policy
+file opts in (see lib/policy.py); env wins when it is set.
 """
 from __future__ import annotations
 
 import ipaddress
 import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+
+def _sibling_module(name: str) -> Any:
+    """Import a lib/ sibling whether or not lib/ is on sys.path."""
+    try:
+        return __import__(name)
+    except Exception:
+        pass
+    try:
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+
+        path = Path(__file__).resolve().parent / f"{name}.py"
+        if not path.is_file():
+            return None
+        loader = SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+wick_policy = _sibling_module("policy")
 
 DANGEROUS_SCHEMES = frozenset(
     {
@@ -189,6 +220,12 @@ def origins_compatible(
 
 
 def allow_private_override() -> bool:
+    """WICK_ALLOW_PRIVATE wins when set; a policy file can opt in otherwise."""
+    if wick_policy is not None:
+        try:
+            return bool(wick_policy.effective().get("allow_private"))
+        except Exception:
+            pass
     return os.environ.get("WICK_ALLOW_PRIVATE", "0") == "1"
 
 

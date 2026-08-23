@@ -33,7 +33,9 @@ def _clean_env(monkeypatch, home: Path) -> None:
         "WICK_VAULT_PASSPHRASE",
         "WICK_VAULT_RELOCK_AFTER_FILL",
         "WICK_VAULT_LOCK_TTL",
+        "WICK_VAULT_REQUIRE_GRANT",
         "WICK_PROFILE",
+        "WICK_POLICY",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -192,6 +194,32 @@ def test_grant_scopes_fill_to_one_origin(vault):
     assert vault.grant("https://example.com/", ttl=0)["error"] == "bad_ttl"
 
 
+def test_require_grant_denies_without_grant(vault, monkeypatch):
+    vault.ensure_local_key()
+    vault.set_entry("demo", password=PASSWORD, url="https://example.com/login")
+    assert vault.resolve("vault://demo/password", reason="test")["ok"] is True
+
+    monkeypatch.setenv("WICK_VAULT_REQUIRE_GRANT", "1")
+    denied = vault.resolve("vault://demo/password", reason="test")
+    assert denied["ok"] is False
+    assert "grant_required" in str(denied.get("error"))
+
+    with pytest.raises(ValueError) as fill_denied:
+        vault.resolve_for_fill(
+            "vault://demo/password", reason="fill", page_url="https://example.com/login"
+        )
+    assert "grant_required" in str(fill_denied.value)
+
+    granted = vault.grant("https://example.com/login", ttl=120)
+    assert granted["ok"] is True
+    assert vault.resolve("vault://demo/password", reason="test")["ok"] is True
+    val, meta = vault.resolve_for_fill(
+        "vault://demo/password", reason="fill", page_url="https://example.com/login"
+    )
+    assert val == PASSWORD
+    assert meta["granted"] is True
+
+
 def test_passphrase_mode_wrong_passphrase_cannot_open(tmp_path, monkeypatch):
     home = tmp_path / "pp"
     home.mkdir()
@@ -280,6 +308,16 @@ def test_doctor_reports_aead_and_format(vault):
     assert local["format"] == "wickvault2"
     assert local["aead"] == "aes-256-gcm"
     assert local["kdf"] == "filekey"
+    assert out["audited"] is False
+    assert out["hsm"] is False
+    assert out["sync"] is False
+    assert out["standing_key"] is True
+    assert local["audited"] is False
+    assert local["hsm"] is False
+    assert local["sync"] is False
+    assert vault.crypto_info()["audited"] is False
+    assert vault.session_status()["standing_key"] is True
+    assert vault.session_status()["require_grant"] is False
 
 
 def test_relock_after_fill_clears_grants(vault, monkeypatch):

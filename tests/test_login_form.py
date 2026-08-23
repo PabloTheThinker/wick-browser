@@ -45,6 +45,20 @@ class TestDetectLogin(unittest.TestCase):
         self.assertFalse(form["is_login"])
         self.assertIsNone(form["password"])
 
+    def test_two_step_needs_password_after_username(self):
+        self.assertTrue(
+            login_form.needs_password_step(username_filled=True, password_visible=False)
+        )
+        self.assertFalse(
+            login_form.needs_password_step(username_filled=True, password_visible=True)
+        )
+        self.assertFalse(
+            login_form.needs_password_step(username_filled=False, password_visible=False)
+        )
+        self.assertTrue(login_form.is_step_button("Continue"))
+        self.assertTrue(login_form.is_step_button("Next"))
+        self.assertFalse(login_form.is_step_button("Log in"))
+
 
 if __name__ == "__main__":
     unittest.main()

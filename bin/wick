@@ -80,6 +80,10 @@ try:
     import approval as wick_approval
 except Exception:
     wick_approval = None  # type: ignore
+try:
+    import policy as wick_policy
+except Exception:
+    wick_policy = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -1067,6 +1071,50 @@ def cmd_shields(args: argparse.Namespace) -> int:
         info["sessions"] = wick_shields.list_sessions()
     else:
         info["lists"] = "shields module missing"
+    if wick_policy is not None:
+        try:
+            info["policy"] = wick_policy.effective()
+        except Exception as e:
+            info["policy"] = {"ok": False, "error": str(e)}
+    if getattr(args, "policy_check", None):
+        if wick_policy is None:
+            print(json.dumps({"ok": False, "error": "no_policy_module"}))
+            return 1
+        src = Path(args.policy_check).expanduser()
+        try:
+            obj = json.loads(src.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(json.dumps({"ok": False, "error": "bad_policy_file", "detail": str(e), "path": str(src)}))
+            return 1
+        checked = wick_policy.validate(obj)
+        checked["path"] = str(src)
+        print(json.dumps(checked, indent=2 if not getattr(args, "json_only", False) else None))
+        return 0 if checked.get("ok") else 1
+    if getattr(args, "policy_write", None):
+        if wick_policy is None:
+            print(json.dumps({"ok": False, "error": "no_policy_module"}))
+            return 1
+        dest = Path(args.policy_write).expanduser()
+        try:
+            obj = json.loads(sys.stdin.read())
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": "bad_json", "detail": str(e)}))
+            return 1
+        out = wick_policy.write_policy(obj, dest)
+        print(json.dumps(out, indent=2 if not getattr(args, "json_only", False) else None))
+        return 0 if out.get("ok") else 1
+    if getattr(args, "policy", False):
+        if wick_policy is None:
+            print(json.dumps({"ok": False, "error": "no_policy_module"}))
+            return 1
+        shown = {
+            "ok": True,
+            "product": "wick",
+            "policy": wick_policy.effective(),
+            "path": str(wick_policy.policy_path()) if wick_policy.policy_path() else None,
+        }
+        print(json.dumps(shown, indent=2 if not getattr(args, "json_only", False) else None))
+        return 0
     if args.update:
         # re-download lists
         import urllib.request
@@ -1126,6 +1174,32 @@ def cmd_session(args: argparse.Namespace) -> int:
     if act == "sweep":
         print(json.dumps(wick_shields.sweep_sessions()))
         return 0
+    if act == "export":
+        reveal = bool(getattr(args, "reveal", False))
+        out = wick_shields.export_session(name, reveal=reveal)
+        dest = getattr(args, "out", None)
+        if dest and out.get("ok"):
+            written = wick_shields.write_session_export(out, Path(dest))
+            if not written.get("ok"):
+                print(json.dumps(written, ensure_ascii=False))
+                return 1
+            out["path"] = written.get("path")
+            out["mode"] = written.get("mode")
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "import":
+        src = getattr(args, "file", None) or getattr(args, "out", None)
+        if not src:
+            print(json.dumps({"ok": False, "error": "missing_file", "hint": "wick session import NAME --file export.json"}))
+            return 2
+        try:
+            payload = json.loads(Path(src).expanduser().read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(json.dumps({"ok": False, "error": "bad_export", "detail": str(e)}))
+            return 1
+        out = wick_shields.import_session(name, payload)
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown {act}"}))
     return 2
 
@@ -2505,6 +2579,11 @@ def _rpc_handlers() -> dict:
           return {"ok": False, "error": "no_shields_module"}
       act = args.get("action") or "list"
       name = args.get("name") or "default"
+      if wick_capability is not None:
+          sa = "export-reveal" if act == "export" and args.get("reveal") else str(act)
+          denied = wick_capability.deny("session", session_action=sa)
+          if denied:
+              return denied
       if act == "list":
           swept = wick_shields.sweep_sessions()
           return {"ok": True, "sessions": wick_shields.list_sessions(), "swept": swept.get("dropped") or []}
@@ -2530,6 +2609,16 @@ def _rpc_handlers() -> dict:
           return wick_shields.drop_session(name, force_default=bool(args.get("force")))
       if act == "sweep":
           return wick_shields.sweep_sessions()
+      if act == "export":
+          return wick_shields.export_session(name, reveal=bool(args.get("reveal")))
+      if act == "import":
+          payload = args.get("data") or args.get("payload")
+          if payload is None and args.get("file"):
+              try:
+                  payload = json.loads(Path(str(args["file"])).expanduser().read_text(encoding="utf-8"))
+              except (OSError, ValueError) as e:
+                  return {"ok": False, "error": "bad_export", "detail": str(e)}
+          return wick_shields.import_session(name, payload)
       return {"ok": False, "soft": True, "error": f"unknown_session_action:{act}"}
 
   def _tools(_args: dict) -> dict:
@@ -2794,6 +2883,9 @@ def main() -> int:
 
     p = sub.add_parser("shields", help="Brave-inspired shields status (lists, sessions, honest scope)")
     p.add_argument("--update", action="store_true", help="re-download EasyList/EasyPrivacy")
+    p.add_argument("--policy", action="store_true", help="show effective policy overlay (file + env)")
+    p.add_argument("--policy-check", metavar="FILE", help="validate a policy JSON file")
+    p.add_argument("--policy-write", metavar="FILE", help="write validated policy JSON from stdin to FILE (0600)")
     _add_json_only(p)
 
     p = sub.add_parser("shields-bench", help="A/B request counts shields on vs off")
@@ -2825,12 +2917,15 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("session", help="Cookie session isolation (ephemeral-by-choice, promote to keep)")
-    p.add_argument("action", choices=["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep"])
+    p.add_argument("action", choices=["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep", "export", "import"])
     p.add_argument("name", nargs="?", default="default")
     p.add_argument("--ephemeral", action="store_true", help="with new: auto-sweep unless promoted")
     p.add_argument("--ttl", type=int, help="with new --ephemeral: lifetime in seconds")
     p.add_argument("--owner", help="with new: agent/owner tag")
     p.add_argument("--force", action="store_true", help="with drop: allow deleting the default session")
+    p.add_argument("--reveal", action="store_true", help="with export: include cookie values (full-act, 0600)")
+    p.add_argument("--out", help="with export: write JSON to this path")
+    p.add_argument("--file", help="with import: path to a revealed session export")
     _add_json_only(p)
 
     p = sub.add_parser(
@@ -3022,11 +3117,14 @@ def main() -> int:
 
     args = ap.parse_args()
     if wick_capability is not None:
+        session_action = getattr(args, "action", None) if args.cmd == "session" else None
+        if session_action == "export" and getattr(args, "reveal", False):
+            session_action = "export-reveal"
         denied = wick_capability.deny(
             args.cmd,
             action=getattr(args, "action", None) if args.cmd in ("act", "tabs") else None,
             vault_action=getattr(args, "vault_action", None) if args.cmd == "vault" else None,
-            session_action=getattr(args, "action", None) if args.cmd == "session" else None,
+            session_action=session_action,
         )
         if denied:
             print(json.dumps(denied, ensure_ascii=False))

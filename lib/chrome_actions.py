@@ -217,6 +217,61 @@ def _scrub_passkey_export(exported: dict) -> dict:
     return out
 
 
+def _locator_visible(locator) -> bool:
+    try:
+        return bool(locator.count() > 0 and locator.first.is_visible())
+    except Exception:
+        return False
+
+
+def _fill_visible(locator, value: str, timeout: int = 15000) -> None:
+    """Wait visible, focus, fill; retry once on timeout/detached."""
+    last: Exception | None = None
+    for _attempt in range(2):
+        try:
+            target = locator.first
+            target.wait_for(state="visible", timeout=timeout)
+            try:
+                target.focus()
+            except Exception:
+                pass
+            target.fill(value, timeout=timeout)
+            return
+        except Exception as e:
+            last = e
+    if last is not None:
+        raise last
+
+
+def _click_login_step(page) -> bool:
+    """Advance a two-step login (Continue / Next) so the password field appears."""
+    names = getattr(wick_login_form, "STEP_BUTTON_NAMES", ("Continue", "Next")) if wick_login_form else ("Continue", "Next")
+    for name in names:
+        try:
+            page.get_by_role("button", name=re.compile(rf"^{name}$", re.I)).first.click(timeout=2500)
+            return True
+        except Exception:
+            continue
+    for sel in ("#continue", "#next", "button[name=continue]", "button[name=next]"):
+        try:
+            page.locator(sel).first.click(timeout=1500)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_after_submit(page) -> None:
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=8000)
+    except Exception:
+        pass
+    try:
+        page.wait_for_load_state("networkidle", timeout=4000)
+    except Exception:
+        pass
+
+
 def _fill_secret(page, sel: str, text: str) -> tuple[str, dict | None, dict | None]:
     """Resolve vault refs against the live page origin. Never return the secret in err."""
     meta = None
@@ -493,7 +548,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
         text, vmeta, verr = _fill_secret(page, sel, text)
         if verr:
             return 1, verr
-        resolve_locator(page, sel).fill(text, timeout=15000)
+        _fill_visible(resolve_locator(page, sel), text)
         out = {"ok": True, "filled": sel, "n": len(text)}
         if vmeta and vmeta.get("resolved"):
             out["vault"] = {
@@ -571,19 +626,31 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
         user_css = wick_login_form.USERNAME_CSS if wick_login_form else 'input[type="email"], input[type="text"]'
         otp_css = wick_login_form.OTP_CSS if wick_login_form else 'input[autocomplete="one-time-code"]'
         if m.get("username_ref"):
-            loc = page.locator(user_css).first
+            loc = page.locator(user_css)
             val, meta = wick_vault.resolve_for_fill(
                 m["username_ref"], reason="act_login", page_url=page.url
             )
-            loc.fill(val, timeout=15000)
+            _fill_visible(loc, val)
             filled.append("username")
             refs.append(meta.get("ref") or m["username_ref"])
+        pw_loc = page.locator(pw_css)
+        need_step = wick_login_form.needs_password_step(
+            username_filled="username" in filled,
+            password_visible=_locator_visible(pw_loc),
+        ) if wick_login_form is not None else (
+            "username" in filled and not _locator_visible(pw_loc)
+        )
+        if m.get("password_ref") and need_step:
+            if _click_login_step(page):
+                try:
+                    pw_loc.first.wait_for(state="visible", timeout=8000)
+                except Exception:
+                    pass
         if m.get("password_ref"):
-            loc = page.locator(pw_css).first
             val, meta = wick_vault.resolve_for_fill(
                 m["password_ref"], reason="act_login", page_url=page.url
             )
-            loc.fill(val, timeout=15000)
+            _fill_visible(pw_loc, val)
             filled.append("password")
             refs.append(meta.get("ref") or m["password_ref"])
         if m.get("otp_ref"):
@@ -592,7 +659,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
                 val, meta = wick_vault.resolve_for_fill(
                     m["otp_ref"], reason="act_login", page_url=page.url
                 )
-                loc.first.fill(val, timeout=15000)
+                _fill_visible(loc, val)
                 filled.append("otp")
                 refs.append(meta.get("ref") or m["otp_ref"])
         submitted = False
@@ -606,6 +673,8 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
                     submitted = True
                 except Exception:
                     submitted = False
+            if submitted:
+                _wait_after_submit(page)
         return 0, {
             "ok": True,
             "action": "login",

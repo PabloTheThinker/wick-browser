@@ -73,9 +73,12 @@ wick probe URL --tree
 
 # Shields & sessions
 wick shields [--update]
+wick shields --policy              # effective allow/deny + harness knobs
 wick session new myjob
 WICK_SESSION=myjob wick open URL
 wick session save myjob
+wick session export myjob          # cookie names/domains only
+# wick session export myjob --reveal --out /tmp/sess.json   # values, 0600, full-act
 
 # Vault (passwords without leaking into agent context)
 wick vault init
@@ -133,6 +136,8 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_BLOCK_HOSTS` | — | Comma-separated host denylist (deny wins) |
 | `WICK_REQUIRE_APPROVAL` | — | Require `wick approve` / `WICK_APPROVE` for login/fill/passkey |
 | `WICK_APPROVE` | — | Harness-granted actions (`login`, `passkey`, `*`) |
+| `WICK_POLICY` | `$WICK_HOME/policy.json` | Policy file: host allow/deny, profile, approvals, vault grant (env wins; deny unions) |
+| `WICK_VAULT_REQUIRE_GRANT` | `0` | Deny vault resolve/fill unless `wick vault grant --url` is active |
 | `WICK_SESSION_AUTO_DROP` | `0` | Drop ephemeral session on process exit |
 | `WICK_LP_PORT` | `9333` | Lightpanda CDP |
 | `WICK_CHROME_PORT` | `9222` | Chromium CDP |

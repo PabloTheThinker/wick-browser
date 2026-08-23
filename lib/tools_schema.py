@@ -182,13 +182,13 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_session",
-        "Cookie/session isolation: list, new (optional ephemeral+ttl), use, save/promote, drop, sweep, meta, path.",
+        "Cookie/session isolation: list, new (optional ephemeral+ttl), use, save/promote, drop, sweep, meta, path, export (redacted by default), import.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep"],
+                    "enum": ["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep", "export", "import"],
                 },
                 "name": {
                     "type": "string",
@@ -207,6 +207,15 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 "owner": {
                     "type": "string",
                     "description": "Optional agent/owner tag.",
+                },
+                "reveal": {
+                    "type": "boolean",
+                    "description": "With export: include cookie values (full-act only).",
+                    "default": False,
+                },
+                "file": {
+                    "type": "string",
+                    "description": "With import: path to a revealed session export.",
                 },
             },
             "required": ["action"],
