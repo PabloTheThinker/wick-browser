@@ -20,6 +20,7 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 - `wick session promote` / `save` keeps cookies; `drop` / `sweep` deletes unpromoted TTL sessions
 - Capability profiles: `WICK_PROFILE=observe-only|safe-act|full-act`
 - Outbound allowlist: `WICK_ALLOW_HOSTS=example.com,.github.com`
+- Computer use: `wick act cu` (screenshot + numbered a11y boxes), `click_xy` / `click_n`, `type` / `type_n`, `key`, `move` / `drag`, structured action errors
 
 ## Security contract (additions)
 
@@ -41,3 +42,15 @@ wick snap https://example.com/login --fast
 wick vault suggest --url https://example.com/login
 wick act login https://example.com/login
 ```
+
+## Computer use
+
+```bash
+wick act goto https://example.com/
+wick act cu
+wick act click_n 1
+wick act type "hello"
+wick act key Enter
+```
+
+`cu` returns `screenshot`, `annotated` (numbered badges), and `elements[]` with `n` / `cx` / `cy`. Names are untrusted. `click_n` reads the last snapshot for the current session.

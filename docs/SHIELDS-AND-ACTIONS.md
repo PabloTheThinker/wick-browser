@@ -24,6 +24,7 @@ Wick optimizes for **agent safety + utility on a local machine**, not “undetec
 | Compact brief | `wick probe` |
 | Sessions / cookies | `wick session new\|save\|list` + `WICK_SESSION=` |
 | Click / fill / goto | `wick act …` (Chromium) |
+| Computer use | `wick act cu` then `click_n` / `click_xy` / `type` |
 | Playbooks | `wick run playbook.json` |
 | Screenshots | `wick open --shot` / `act` + shot |
 | Shields status | `wick shields [--update]` |

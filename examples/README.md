@@ -34,7 +34,7 @@ wick act wait_url "example.com" 15000
 ## Supported playbook actions
 
 - **Light (Lightpanda):** `open`, `fetch`, `probe`, `tree`, `links`
-- **Chromium:** `goto`, `click`, `fill`, `login`, `select`, `check`, `press`, `wait`, `eval`, `content`, `title`, `back`, `forward`, `reload`, `scroll`, `hover`, `pdf`, `screenshot`, `tab_new`, `tab_list`, `cookies`, `shot`
+- **Chromium:** `goto`, `click`, `click_xy`, `click_n`, `cu`, `type`, `type_n`, `key`, `fill`, `login`, `select`, `check`, `press`, `wait`, `wait_url`, `wait_text`, `eval`, `content`, `title`, `back`, `forward`, `reload`, `scroll`, `hover`, `pdf`, `screenshot`, `tab_new`, `tab_list`, `cookies`, `shot`
 - **Sessions:** `session_new`, `session_save`, `session_drop`, `session_sweep`
 
 Anything else is recorded as soft-ignored and the run continues.

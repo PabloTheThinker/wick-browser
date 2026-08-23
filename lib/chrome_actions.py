@@ -35,6 +35,10 @@ try:
     import capability as wick_capability
 except Exception:
     wick_capability = None  # type: ignore
+try:
+    import computer_use as wick_cu
+except Exception:
+    wick_cu = None  # type: ignore
 
 
 def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
@@ -131,10 +135,224 @@ def main() -> int:
                 pass
             print(json.dumps({"ok": True, "url": page.url, "title": page.title()}))
 
+        elif action == "click" and wick_cu is not None and wick_cu.looks_like_xy(args):
+            x, y = wick_cu.parse_xy(args)
+            page.mouse.click(x, y)
+            print(json.dumps({"ok": True, "clicked": "xy", "x": x, "y": y, "url": page.url}))
+
+        elif action in ("click", "click_n") and wick_cu is not None and wick_cu.parse_n(args) is not None and (
+            action == "click_n"
+            or str(args[0]).startswith(("n=", "#"))
+            or wick_cu.resolve_n(wick_cu.parse_n(args), wick_cu.load_last_state()) is not None
+        ):
+            n = wick_cu.parse_n(args)
+            if n is None:
+                print(json.dumps({"ok": False, "error": "need_n", "hint": "wick act click_n 3"}))
+                return 2
+            state = wick_cu.load_last_state()
+            el = wick_cu.resolve_n(n, state)
+            if not el or el.get("cx") is None or el.get("cy") is None:
+                print(json.dumps({
+                    "ok": False,
+                    "error": "unknown_n",
+                    "n": n,
+                    "hint": "Run wick act cu first, then wick act click_n N",
+                }))
+                return 1
+            x, y = float(el["cx"]), float(el["cy"])
+            page.mouse.click(x, y)
+            stale = bool(state and state.get("url") and state.get("url") != page.url)
+            print(json.dumps({
+                "ok": True,
+                "clicked": "n",
+                "n": n,
+                "x": x,
+                "y": y,
+                "name": el.get("name"),
+                "role": el.get("role"),
+                "stale": stale,
+                "url": page.url,
+            }))
+
         elif action == "click":
             sel = args[0]
             resolve_locator(page, sel).click(timeout=15000)
             print(json.dumps({"ok": True, "clicked": sel, "url": page.url}))
+
+        elif action == "click_xy":
+            if wick_cu is None or not wick_cu.looks_like_xy(args):
+                print(json.dumps({"ok": False, "error": "need_x_y", "hint": "wick act click_xy 120 340"}))
+                return 2
+            x, y = wick_cu.parse_xy(args)
+            page.mouse.click(x, y)
+            print(json.dumps({"ok": True, "clicked": "xy", "x": x, "y": y, "url": page.url}))
+
+        elif action in ("dblclick", "doubleclick"):
+            if wick_cu is not None and wick_cu.looks_like_xy(args):
+                x, y = wick_cu.parse_xy(args)
+                page.mouse.dblclick(x, y)
+                print(json.dumps({"ok": True, "dblclicked": "xy", "x": x, "y": y, "url": page.url}))
+            else:
+                resolve_locator(page, args[0]).dblclick(timeout=15000)
+                print(json.dumps({"ok": True, "dblclicked": args[0], "url": page.url}))
+
+        elif action in ("rightclick", "contextclick"):
+            if wick_cu is not None and wick_cu.looks_like_xy(args):
+                x, y = wick_cu.parse_xy(args)
+                page.mouse.click(x, y, button="right")
+                print(json.dumps({"ok": True, "rightclicked": "xy", "x": x, "y": y, "url": page.url}))
+            else:
+                resolve_locator(page, args[0]).click(timeout=15000, button="right")
+                print(json.dumps({"ok": True, "rightclicked": args[0], "url": page.url}))
+
+        elif action == "move":
+            if wick_cu is None or not wick_cu.looks_like_xy(args):
+                print(json.dumps({"ok": False, "error": "need_x_y"}))
+                return 2
+            x, y = wick_cu.parse_xy(args)
+            page.mouse.move(x, y)
+            print(json.dumps({"ok": True, "moved": [x, y], "url": page.url}))
+
+        elif action == "drag":
+            if wick_cu is None or len(args) < 4:
+                print(json.dumps({"ok": False, "error": "need_x1_y1_x2_y2"}))
+                return 2
+            x1, y1 = float(args[0]), float(args[1])
+            x2, y2 = float(args[2]), float(args[3])
+            page.mouse.move(x1, y1)
+            page.mouse.down()
+            page.mouse.move(x2, y2, steps=8)
+            page.mouse.up()
+            print(json.dumps({"ok": True, "dragged": [x1, y1, x2, y2], "url": page.url}))
+
+        elif action == "type":
+            text = args[0] if args else ""
+            if wick_vault is not None and wick_vault.is_secret_ref(text):
+                text, vmeta, verr = _fill_secret(page, "", text)
+                if verr:
+                    print(json.dumps(verr))
+                    return 1
+            else:
+                vmeta = None
+            page.keyboard.type(text, delay=15)
+            out = {"ok": True, "typed": True, "n": len(text), "url": page.url}
+            if vmeta and vmeta.get("resolved"):
+                out["vault"] = {k: vmeta[k] for k in ("ref", "backend", "chars", "origin_ok") if k in vmeta}
+            print(json.dumps(out))
+
+        elif action == "type_n":
+            if wick_cu is None:
+                print(json.dumps({"ok": False, "error": "computer_use_missing"}))
+                return 1
+            n = wick_cu.parse_n(args)
+            if n is None:
+                print(json.dumps({"ok": False, "error": "need_n", "hint": "wick act type_n 3 hello"}))
+                return 2
+            state = wick_cu.load_last_state()
+            el = wick_cu.resolve_n(n, state)
+            if not el or el.get("cx") is None or el.get("cy") is None:
+                print(json.dumps({
+                    "ok": False,
+                    "error": "unknown_n",
+                    "n": n,
+                    "hint": "Run wick act cu first, then wick act type_n N TEXT",
+                }))
+                return 1
+            text = args[1] if len(args) > 1 else ""
+            if wick_vault is not None and wick_vault.is_secret_ref(text):
+                text, vmeta, verr = _fill_secret(page, "", text)
+                if verr:
+                    print(json.dumps(verr))
+                    return 1
+            else:
+                vmeta = None
+            x, y = float(el["cx"]), float(el["cy"])
+            page.mouse.click(x, y)
+            page.keyboard.type(text, delay=15)
+            out = {
+                "ok": True,
+                "typed": True,
+                "target_n": n,
+                "chars": len(text),
+                "x": x,
+                "y": y,
+                "url": page.url,
+            }
+            if vmeta and vmeta.get("resolved"):
+                out["vault"] = {k: vmeta[k] for k in ("ref", "backend", "chars", "origin_ok") if k in vmeta}
+            print(json.dumps(out))
+
+        elif action == "wait_text":
+            text = args[0]
+            timeout = int(args[1]) if len(args) > 1 else 15000
+            page.get_by_text(text).first.wait_for(state="visible", timeout=timeout)
+            print(json.dumps({"ok": True, "waited_text": text, "url": page.url}))
+
+        elif action == "wait_visible":
+            sel = args[0]
+            timeout = int(args[1]) if len(args) > 1 else 15000
+            resolve_locator(page, sel).wait_for(state="visible", timeout=timeout)
+            print(json.dumps({"ok": True, "waited": sel, "url": page.url}))
+
+        elif action == "dialog":
+            mode = (args[0] if args else "accept").lower()
+            prompt = args[1] if len(args) > 1 else ""
+
+            def _on_dialog(d):
+                if mode in ("dismiss", "cancel"):
+                    d.dismiss()
+                else:
+                    d.accept(prompt)
+
+            page.once("dialog", _on_dialog)
+            print(json.dumps({"ok": True, "dialog": mode, "armed": True, "hint": "Next alert/confirm/prompt will be handled."}))
+
+        elif action in ("cu", "computer", "a11y"):
+            raw: dict = {}
+            if wick_cu is not None:
+                try:
+                    raw = page.evaluate(wick_cu.A11Y_JS) or {}
+                except Exception:
+                    raw = {}
+            if not isinstance(raw, dict):
+                raw = {}
+            numbered = wick_cu.number_targets(list(raw.get("elements") or [])) if wick_cu else []
+            shot = None
+            annotated = None
+            if action != "a11y":
+                dest = Path(
+                    args[0]
+                    if args
+                    else str(Path(os.environ.get("WICK_HOME") or Path.home() / ".wick") / "shots" / "cu.png")
+                )
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(dest), full_page=False)
+                shot = str(dest)
+                if wick_cu is not None and numbered:
+                    ann = dest.with_name(f"{dest.stem}-boxes{dest.suffix}")
+                    try:
+                        page.evaluate(wick_cu.OVERLAY_INSTALL_JS, numbered)
+                        page.screenshot(path=str(ann), full_page=False)
+                        annotated = str(ann)
+                    except Exception:
+                        annotated = None
+                    finally:
+                        try:
+                            page.evaluate(wick_cu.OVERLAY_REMOVE_JS)
+                        except Exception:
+                            pass
+            if wick_cu is None:
+                print(json.dumps({"ok": True, "url": page.url, "title": page.title(), "screenshot": shot, "elements": []}))
+            else:
+                payload = wick_cu.build_cu_payload(
+                    url=page.url,
+                    title=page.title(),
+                    screenshot=shot,
+                    raw=raw,
+                    annotated=annotated,
+                )
+                wick_cu.save_last_state(payload)
+                print(json.dumps(payload))
 
         elif action == "fill":
             sel, text = args[0], args[1]
@@ -254,9 +472,21 @@ def main() -> int:
             page.check(args[0], timeout=15000)
             print(json.dumps({"ok": True, "checked": args[0]}))
 
-        elif action == "press":
-            page.keyboard.press(args[0])
-            print(json.dumps({"ok": True, "pressed": args[0]}))
+        elif action in ("press", "key"):
+            raw_key = args[0] if args else "Enter"
+            key = wick_cu.normalize_key(raw_key) if wick_cu is not None else raw_key
+            page.keyboard.press(key)
+            print(json.dumps({"ok": True, "pressed": key, "url": page.url}))
+
+        elif action == "scroll_xy":
+            if wick_cu is None or not wick_cu.looks_like_xy(args):
+                print(json.dumps({"ok": False, "error": "need_x_y", "hint": "wick act scroll_xy 120 340 400"}))
+                return 2
+            x, y = wick_cu.parse_xy(args)
+            dy = int(float(args[2])) if len(args) > 2 else 400
+            page.mouse.move(x, y)
+            page.mouse.wheel(0, dy)
+            print(json.dumps({"ok": True, "scrolled_xy": [x, y], "amount": dy, "url": page.url}))
 
         elif action == "wait":
             page.wait_for_selector(args[0], timeout=30000)
@@ -385,7 +615,15 @@ def main() -> int:
             return 2
         return 0
     except Exception as e:
-        print(json.dumps({"ok": False, "error": "action_failed", "action": action, "detail": str(e)[:300]}))
+        url = ""
+        try:
+            url = page.url
+        except Exception:
+            pass
+        if wick_cu is not None:
+            print(json.dumps(wick_cu.fail_payload(action, e, url=url)))
+        else:
+            print(json.dumps({"ok": False, "error": "action_failed", "action": action, "detail": str(e)[:300]}))
         return 1
     finally:
         try:

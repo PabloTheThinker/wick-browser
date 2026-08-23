@@ -187,6 +187,11 @@ def plan_suggestions(
             "why": f"{len(elements)} interactive targets available",
         })
     out.append({
+        "action": "cu",
+        "cmd": "wick act cu",
+        "why": "computer-use loop: screenshot + numbered on-screen targets (click_n / click_xy)",
+    })
+    out.append({
         "action": "screenshot",
         "cmd": "wick act goto <url> && wick act screenshot",
         "why": "visual snapshot via Chromium when observe is not enough",

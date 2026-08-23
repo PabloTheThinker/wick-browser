@@ -131,18 +131,18 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_act",
-        "Chromium interactive action. For passwords pass secret refs (vault://…, pass://…, env://…). Prefer action=login for origin-bound autofill like a human password manager.",
+        "Chromium interactive action. Computer-use: cu (screenshot + numbered boxes), click_xy / click_n, type / type_n, key. For passwords pass secret refs (vault://…, pass://…, env://…). Prefer action=login for origin-bound autofill.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "Action name: goto, click, fill, login, wait_url, scroll, pdf, …",
+                    "description": "goto, cu, click, click_xy, click_n, type, type_n, key, fill, login, wait_url, scroll, pdf, …",
                 },
                 "rest": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Action arguments. For fill: [selector, text_or_secret_ref].",
+                    "description": "Action arguments. cu: [optional screenshot path]. click_xy: [x, y]. click_n: [n]. type: [text]. fill: [selector, text_or_secret_ref].",
                     "default": [],
                 },
             },

@@ -1299,7 +1299,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             results.append({"i": i, "action": act, "result": r})
             continue
         if wick_capability is not None and act in (
-            "goto", "click", "fill", "select", "login", "eval", "download", "get",
+            "goto", "click", "click_xy", "click_n",
+            "dblclick", "doubleclick", "rightclick", "contextclick",
+            "fill", "login", "type", "type_n", "select", "check",
+            "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
+            "eval", "content", "title", "shot", "back", "forward", "reload",
+            "scroll", "scroll_xy", "move", "drag", "hover",
+            "pdf", "screenshot", "tab_new", "tab_list", "tab_switch", "tab_close",
+            "cookies", "dialog", "cu", "computer", "a11y",
+            "download", "get",
         ):
             denied = wick_capability.deny("act" if act != "get" else "get", action=act)
             if denied:
@@ -1331,7 +1339,16 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if r.get("ok"):
                     r = {"ok": True, "url": url, "links": extract_md_links(r.get("content") or "")}
             results.append({"i": i, "action": act, "result": r})
-        elif act in ("goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "shot", "back", "forward", "reload", "scroll", "hover", "pdf", "screenshot", "tab_new", "tab_list", "cookies", "login"):
+        elif act in (
+            "goto", "click", "click_xy", "click_n",
+            "dblclick", "doubleclick", "rightclick", "contextclick",
+            "fill", "login", "type", "type_n", "select", "check",
+            "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
+            "eval", "content", "title", "shot", "back", "forward", "reload",
+            "scroll", "scroll_xy", "move", "drag", "hover",
+            "pdf", "screenshot", "tab_new", "tab_list", "tab_switch", "tab_close",
+            "cookies", "dialog", "cu", "computer", "a11y",
+        ):
             if act == "shot":
                 out = step.get("out") or str(SHOTS / f"run-{i}.png")
                 rc = run_pw("action_shot.py", out, "viewport")
@@ -1342,10 +1359,27 @@ def cmd_run(args: argparse.Namespace) -> int:
                 env = os.environ.copy()
                 env["WICK_CHROME_PORT"] = str(CHROME_PORT)
                 rest = []
+                chrome_act = act
                 if act == "goto":
                     rest = [step["url"]]
                 elif act == "click":
-                    rest = [step["selector"]]
+                    if step.get("n") is not None:
+                        chrome_act = "click_n"
+                        rest = [str(step["n"])]
+                    elif step.get("x") is not None:
+                        chrome_act = "click_xy"
+                        rest = [str(step["x"]), str(step["y"])]
+                    else:
+                        rest = [step["selector"]]
+                elif act in ("click_xy", "move"):
+                    rest = [str(step.get("x")), str(step.get("y"))]
+                elif act == "click_n":
+                    rest = [str(step.get("n"))]
+                elif act in ("dblclick", "doubleclick", "rightclick", "contextclick"):
+                    if step.get("x") is not None:
+                        rest = [str(step["x"]), str(step["y"])]
+                    else:
+                        rest = [step.get("selector") or ""]
                 elif act == "fill":
                     rest = [step["selector"], step.get("text") or step.get("value") or step.get("secret_ref") or ""]
                 elif act == "select":
@@ -1380,16 +1414,40 @@ def cmd_run(args: argparse.Namespace) -> int:
                     rest = []
                 elif act == "cookies":
                     rest = []
-                elif act == "press":
+                elif act in ("press", "key"):
                     rest = [step.get("key") or "Enter"]
+                elif act == "type":
+                    rest = [step.get("text") or step.get("value") or ""]
+                elif act == "type_n":
+                    rest = [str(step.get("n")), step.get("text") or step.get("value") or ""]
                 elif act == "wait":
                     rest = [step["selector"]]
+                elif act == "wait_url":
+                    rest = [step.get("fragment") or step.get("url") or "", str(step.get("timeout") or 30000)]
+                elif act == "wait_text":
+                    rest = [step.get("text") or "", str(step.get("timeout") or 15000)]
+                elif act == "wait_visible":
+                    rest = [step.get("selector") or "", str(step.get("timeout") or 15000)]
+                elif act == "scroll_xy":
+                    rest = [str(step.get("x")), str(step.get("y")), str(step.get("amount") or 400)]
+                elif act == "drag":
+                    rest = [str(step.get("x1")), str(step.get("y1")), str(step.get("x2")), str(step.get("y2"))]
+                elif act == "dialog":
+                    rest = [step.get("mode") or "accept"]
+                    if step.get("text"):
+                        rest.append(str(step["text"]))
+                elif act in ("cu", "computer", "a11y"):
+                    rest = [step["out"]] if step.get("out") else []
+                elif act == "tab_switch":
+                    rest = [str(step.get("index") or 0)]
+                elif act == "tab_close":
+                    rest = [str(step["index"])] if step.get("index") is not None else []
                 elif act == "eval":
                     rest = [step.get("expr") or step.get("js") or "document.title"]
                 elif act == "content":
                     rest = [str(step.get("max") or 8000)]
                 out = subprocess.check_output(
-                    [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), act, *rest],
+                    [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), chrome_act, *rest],
                     env=env,
                     stderr=subprocess.STDOUT,
                 )
@@ -2500,9 +2558,20 @@ def main() -> int:
     p.add_argument("--allow-subdomains", action="store_true", help="with set: allow app.example.com to use an example.com entry")
     _add_json_only(p)
 
-    p = sub.add_parser("act", help="Chromium interactive action (goto/click/fill/press/wait/eval/content/login)")
-    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "wait_url", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies", "login"])
-    p.add_argument("rest", nargs="*", help="action args (selector, text|secret-ref, url, ...)")
+    p = sub.add_parser("act", help="Chromium action (goto/click/cu/click_xy/type/login/…)")
+    p.add_argument("action", choices=[
+        "goto", "click", "click_xy", "click_n",
+        "dblclick", "doubleclick", "rightclick", "contextclick",
+        "fill", "login", "type", "type_n", "select", "check",
+        "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
+        "eval", "content", "title", "back", "forward", "reload",
+        "scroll", "scroll_xy", "move", "drag", "hover",
+        "tab_new", "tab_list", "tab_switch", "tab_close",
+        "pdf", "screenshot", "download", "cookies",
+        "dialog", "cu", "computer", "a11y",
+    ])
+    p.add_argument("rest", nargs="*",
+        help="URL / selector / value / x y (click_xy) / n (click_n) / text (type)")
     _add_json_only(p)
 
     p = sub.add_parser("run", help="Run JSON playbook of open/fetch/click/... steps")

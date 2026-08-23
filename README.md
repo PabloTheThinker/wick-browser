@@ -84,6 +84,9 @@ wick act goto URL
 wick act click 'role=link[name="More information"]'   # role= hints from snap/plan/ask
 wick act click "css=button.submit"
 wick act fill "css=input[name=q]" "hello"
+wick act cu                                           # screenshot + numbered targets
+wick act click_n 3                                    # or click_xy 120 340
+wick act type "hello"
 wick act wait_url "fragment" 15000                    # wait for navigation
 wick tabs new --url URL
 wick tabs list

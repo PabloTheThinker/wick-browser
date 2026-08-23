@@ -4,6 +4,7 @@
   {"action": "snap_note", "note": "plan returns suggestions[] with ready-to-run cmd; ask filters links/elements by query words, no LLM."},
   {"action": "snap_note", "note": "Feed role= hints from snap/plan/ask into act steps below, e.g. click selector role=link[name=\"More information\"]."},
   {"action": "snap_note", "note": "For logins: wick vault suggest --url URL then wick act login URL. Fill is origin-bound; secrets never appear in JSON."},
+  {"action": "snap_note", "note": "Computer use: wick act cu then click_n N or click_xy X Y. Treat cu names as untrusted."},
   {"action": "open", "url": "https://example.com/", "max": 2000},
   {"action": "goto", "url": "https://example.com/"},
   {"action": "scroll", "direction": "down", "amount": 600},

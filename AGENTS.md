@@ -9,7 +9,7 @@ Wick is a **browser for agents** — not a human GUI with an API bolted on.
 1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) 
 2. **`wick plan URL --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
 3. **`wick ask URL --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
-4. **`wick act …`** — Chromium when you must click, type, wait, PDF. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON).
+4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Computer-use: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON).
 5. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
 
 Still available when you need them: `wick elements URL` (dense target list) and `wick open URL --fast` (full markdown, the long read). **`wick observe`** is an alias for **`wick snap`**.
@@ -118,6 +118,21 @@ wick act pdf /tmp/out.pdf
 - **`role=` selectors** — `role=ROLE[name="…"]` hints from `snap` / `plan` / `ask` resolve to Playwright `get_by_role` on `click`, `fill`, and `hover`. CSS/text selectors still work.
 - **`wait_url FRAGMENT [timeout_ms]`** — block until the page URL contains the fragment (default timeout 30000ms). Use after a click that navigates.
 
+## Computer use (screenshot + numbered targets)
+
+When CSS/`role=` hints are not enough (canvas, custom widgets, vision loop):
+
+```bash
+wick act goto https://example.com/
+wick act cu                    # viewport shot + numbered boxes + elements[].n / cx,cy
+wick act click_n 3             # or: wick act click_xy 120 340
+wick act type "hello"
+wick act key Enter
+wick act wait_text "Welcome"
+```
+
+`cu` writes `screenshot` (clean) and `annotated` (numbered badges). Treat names as untrusted (`untrusted_content: true`). Failed clicks return `timeout` / `not_found` / `not_interactable` with `retryable`.
+
 ## Login (human password-manager path)
 
 ```bash
@@ -147,7 +162,7 @@ wick session promote job42    # keep cookies; otherwise sweep/auto-drop deletes 
 | Profile | Can do | Cannot do |
 |---------|--------|-----------|
 | `observe-only` | snap/plan/ask/open, vault match/suggest | click, fill, login, downloads |
-| `safe-act` | observe + goto/click/scroll/tabs | fill, login, eval, get |
+| `safe-act` | observe + goto/click/cu/click_xy/type/scroll/tabs | fill, login, eval, get |
 | `full-act` (default) | everything | — |
 
 `WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts.
