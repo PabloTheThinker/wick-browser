@@ -14,8 +14,8 @@ PURPOSE = (
 
 LOOP = [
     "snap — first look (kind, excerpt, headings, hints). After you are on a page, omit the URL.",
-    "read — structured body (headings + paragraphs) when the excerpt is not enough. Prefer this over open.",
-    "plan or ask — suggestions or a query filter. Same observe cache (~8s).",
+    "read — structured body (headings + paragraphs). Pass --q or --section to keep only the relevant prose. Prefer this over open.",
+    "plan or ask — suggestions, or filter links/headings/paragraphs. Same observe cache (~8s).",
     "act — click/fill using THIS snap's elements[].hint. Search: fill + press Enter.",
     "wait_url if the click navigates, then snap again with no URL.",
 ]
@@ -25,16 +25,16 @@ RULES = [
     "Do not re-goto a page Chromium is already on. Snap here instead.",
     "Use hints from the latest snap only. Stale hints miss.",
     "Search boxes: fill the searchbox hint, then act press Enter. Do not click a generic Go.",
-    "Prefer snap, then read. open is the long dump. cu is last resort (canvas, widgets, challenges).",
+    "Prefer snap, then read --q/--section. open is the long dump. cu is last resort (canvas, widgets, challenges).",
     "Secrets never appear in snap/plan/ask/status/list/suggest JSON. Use vault refs + act login.",
     "Do not log into GitHub, Google, or banks. Do not send CAPTCHA puzzles to a third party.",
 ]
 
 COMMANDS = {
     "observe": "wick snap [URL] --fast   # omit URL after act",
-    "read": "wick read [URL]   # headings + paragraphs",
+    "read": "wick read [URL] [--q terms] [--section Heading]",
     "plan": "wick plan [URL] --fast",
-    "ask": "wick ask [URL] --q terms",
+    "ask": "wick ask [URL] --q terms   # links + headings + paragraphs",
     "act": "wick act click 'role=…'",
     "search": "wick act fill 'role=searchbox[name=\"…\"]' QUERY && wick act press Enter",
     "login": "wick vault suggest --url URL && wick act login URL",

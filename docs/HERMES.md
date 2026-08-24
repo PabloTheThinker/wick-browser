@@ -53,9 +53,9 @@ For a login job, start a **separate** Hermes turn (or raise the process to `full
 ### Loop Hermes should follow
 
 0. **`skill`** `{}` once — purpose, loop, rules.
-1. **`snap`** `{url, profile: "micro"}` — kind, title, headings, interactive elements, `role=` hints. Cheap Chromium observe. After any `act`, snap again with **no url** (`here`) so Wick skips goto. Need the prose? **`read`** `{}` (structured body). Prefer that over `open`.
-2. If the excerpt is not enough, **`ask`** `{q: "terms"}` or **`plan`** `{}` (same observe cache, ~8s TTL; cleared after a successful act).
-3. Need the long read? **`open`** `{url, fast: true}`.
+1. **`snap`** `{url, profile: "micro"}` — kind, title, headings, interactive elements, `role=` hints. Cheap Chromium observe. After any `act`, snap again with **no url** (`here`) so Wick skips goto. Need the prose? **`read`** `{}` (structured body). Pass `q` or `section` to keep only matching paragraphs. Prefer that over `open`.
+2. If the excerpt is not enough, **`ask`** `{q: "terms"}` (links + headings + paragraphs) or **`plan`** `{}` (same observe cache, ~8s TTL; cleared after a successful act).
+3. Need the long dump? **`open`** `{url, fast: true}`.
 4. Must click? **`act`** `{action: "click", rest: ["role=link[name=\"More information\"]"]}` using **this** snap's hint. Search: fill the searchbox, then `{action: "press", rest: ["Enter"]}`. Do not click a generic Go.
 5. Login (full-act only): **`vault`** `{action: "suggest", url}` then **`act`** `{action: "login", rest: [url]}` or `{action: "passkey", rest: [url]}`. Secrets stay inside Chromium. If `WICK_REQUIRE_APPROVAL=1`, a sidecar — not Hermes — must run `wick approve login`.
 6. Canvas / custom widgets / human challenges: first **`challenge`** `{url}` (observe-only detect). Then **`act`** `{action: "cu"}` then `click_n` / `click_xy` / `type`. Last resort. Set `WICK_CHALLENGE_COMPUTER_USE=1` (see `examples/hermes.yaml`) so those clicks are not halted. After the widget is gone: **`act`** `{action: "login", rest: [url, "--after-challenge"]}` — one command that waits, then origin-bound fills. Do not send the puzzle to a third-party service. Do not `act login` against GitHub/Google/banks from a demo harness.

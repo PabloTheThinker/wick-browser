@@ -67,15 +67,23 @@ WICK_TOOLS: list[dict[str, Any]] = [
     _fn(
         "wick_read",
         (
-            "Structured page read: kind, headings, and paragraphs. "
+            "Structured page read: kind, headings, sections, and paragraphs. "
             "Use after snap when you need the prose — not a full markdown dump. "
-            "Omit url after act to read the current tab."
+            "Pass q or section to keep only matching body. Omit url after act."
         ),
         {
             "type": "object",
             "properties": {
                 "url": URL_PROP,
                 "here": HERE_PROP,
+                "q": {
+                    "type": "string",
+                    "description": "Keep paragraphs matching these words (no LLM).",
+                },
+                "section": {
+                    "type": "string",
+                    "description": "Keep one heading and its paragraphs.",
+                },
                 "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "fail_http": FAIL_HTTP_PROP,
@@ -136,7 +144,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_ask",
-        "Snap + deterministic filter of links/elements/excerpt by query words (no LLM). Omit url after act.",
+        "Snap + deterministic filter of links/elements/excerpt/headings/paragraphs by query words (no LLM). Omit url after act.",
         {
             "type": "object",
             "properties": {

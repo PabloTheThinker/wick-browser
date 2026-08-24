@@ -165,6 +165,12 @@ class TestChromeFixture(unittest.TestCase):
         self.assertEqual(out.get("kind"), "article")
         paras = out.get("paragraphs") or []
         self.assertTrue(any("structured read" in p.lower() for p in paras), paras)
+        sections = out.get("sections") or []
+        heads = " ".join(str(s.get("heading") or "") for s in sections)
+        self.assertIn("How agents should read them", heads)
+        agents = next((s for s in sections if "agents" in (s.get("heading") or "").lower()), None)
+        self.assertIsNotNone(agents, sections)
+        self.assertTrue(any("structured read" in p.lower() for p in (agents.get("paragraphs") or [])), agents)
 
     def test_observe_prefers_main_search_results(self):
         shop = f"http://127.0.0.1:{self.port}/search-results.html"

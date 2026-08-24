@@ -43,9 +43,11 @@ Use `--profile micro` or `--fast` for agent loops. When the excerpt is not enoug
 
 ```bash
 wick read                    # current page: kind, headings, paragraphs
+wick read --q "rfc 2606"     # matching paragraphs only
+wick read --section "Why these names exist"
 ```
 
-Prefer `read` over `open`. `open` is the full markdown dump.
+Prefer `read` over `open`. `open` is the full markdown dump. `ask --q` also returns matching headings and paragraphs.
 
 ## Plan — `wick plan` (new in 0.6.1)
 
@@ -69,7 +71,7 @@ Snap plus a deterministic fuzzy filter — no LLM in the loop:
 wick ask https://example.com/ --q "more information"
 ```
 
-Query words (2+ chars) are matched as case-insensitive substrings against link text/href, element name/role/hint, and the excerpt. Output contains only the matching `links[]` and `elements[]` (score-sorted), plus `excerpt_score` so you know whether the body text is relevant at all.
+Query words (2+ chars) are matched as case-insensitive substrings against link text/href, element name/role/hint, excerpt, headings, and paragraphs. Output contains only the matching `links[]`, `elements[]`, `headings[]`, and `paragraphs[]` (score-sorted), plus `excerpt_score` so you know whether the body text is relevant at all.
 
 ## Elements — click targets
 

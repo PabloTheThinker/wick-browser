@@ -17,13 +17,14 @@ A human browser optimizes for pixels. An agent needs structure: titles, excerpts
 ## The loop: observe → plan → ask → act
 
 ```bash
-wick snap https://example.com/ --fast   # situation report: title, excerpt, links, elements
+wick snap https://example.com/ --fast   # situation report: kind, excerpt, headings, elements
+wick read --q "terms"                   # structured body; --section keeps one heading
 wick plan https://example.com/ --fast   # ranked next steps, each with a ready-to-run cmd
-wick ask  https://example.com/ --q "terms"  # deterministic filter — no LLM call
+wick ask  https://example.com/ --q "terms"  # filter links, headings, paragraphs — no LLM
 wick act click 'role=link[name="More information"]'  # heavy contact, only when needed
 ```
 
-`snap` returns interactive elements with `role=` hints that resolve natively to Playwright targets on the act path — the observation *is* the selector. `plan` turns a snapshot into goal-agnostic suggestions with runnable commands. `ask` filters links, elements, and excerpt by substring match, so cheap queries stay cheap. `act` drives real Chromium: click, fill, scroll, tabs, `wait_url` navigation guards, screenshots, PDF. `wick run playbook.json` chains it all into multi-step jobs where unknown actions fail soft instead of killing the run.
+`snap` returns interactive elements with `role=` hints that resolve natively to Playwright targets on the act path — the observation *is* the selector. `read` is the structured body (`kind`, headings, sections, paragraphs); `--q` / `--section` keep only the matching prose. `plan` turns a snapshot into goal-agnostic suggestions with runnable commands. `ask` filters links, headings, paragraphs, and excerpt by substring match, so cheap queries stay cheap. `act` drives real Chromium: click, fill, scroll, tabs, `wait_url` navigation guards, screenshots, PDF. `wick run playbook.json` chains it all into multi-step jobs where unknown actions fail soft instead of killing the run.
 
 ## Harness integration (0.7)
 

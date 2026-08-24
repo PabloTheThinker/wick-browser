@@ -103,21 +103,40 @@ _OBSERVE_JS = """() => {
   const main = pickMain();
   const text = ((main && main.innerText) || (document.body && document.body.innerText) || '').slice(0, 20000);
   const headings = [];
-  for (const h of document.querySelectorAll('h1, h2, h3')) {
-    if (!isVisible(h) || inChrome(h)) continue;
-    const t = (h.innerText || '').replace(/\\s+/g, ' ').trim();
-    if (!t || skipName(t)) continue;
-    headings.push({level: parseInt(h.tagName[1], 10), text: t.slice(0, 160)});
-    if (headings.length >= 16) break;
-  }
   const paragraphs = [];
+  const sections = [];
   const paraRoot = main || document.body;
-  for (const p of paraRoot.querySelectorAll('p, li')) {
-    if (!isVisible(p) || inChrome(p)) continue;
-    const t = (p.innerText || '').replace(/\\s+/g, ' ').trim();
+  let current = null;
+  const startSection = (level, heading) => {
+    current = {heading, level, paragraphs: []};
+    sections.push(current);
+    headings.push({level, text: heading.slice(0, 160)});
+  };
+  const addPara = (t) => {
+    const slice = t.slice(0, 500);
+    if (current && current.paragraphs.length < 8) current.paragraphs.push(slice);
+    if (paragraphs.length < 24) paragraphs.push(slice);
+  };
+  for (const el of paraRoot.querySelectorAll('h1, h2, h3, p, li')) {
+    if (!isVisible(el) || inChrome(el)) continue;
+    const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (!t) continue;
+    if (/^H[123]$/.test(el.tagName)) {
+      if (skipName(t) || headings.length >= 24) continue;
+      startSection(parseInt(el.tagName[1], 10), t);
+      continue;
+    }
     if (t.length < 40) continue;
-    paragraphs.push(t.slice(0, 500));
-    if (paragraphs.length >= 12) break;
+    addPara(t);
+  }
+  if (paragraphs.length < 3) {
+    for (const card of paraRoot.querySelectorAll('article, [data-asin], .s-result-item')) {
+      if (!isVisible(card) || inChrome(card)) continue;
+      const t = (card.innerText || '').replace(/\\s+/g, ' ').trim();
+      if (t.length < 16) continue;
+      addPara(t.slice(0, 500));
+      if (paragraphs.length >= 12) break;
+    }
   }
   const title = document.title || '';
   const links = [];
@@ -192,7 +211,7 @@ _OBSERVE_JS = """() => {
   const sel = 'a[href], button, input, textarea, select, [role=button], [role=link], [role=textbox], [role=searchbox]';
   if (main) main.querySelectorAll(sel).forEach(pushEl);
   document.querySelectorAll(sel).forEach(pushEl);
-  return {title, text, links, elements, headings, paragraphs};
+  return {title, text, links, elements, headings, paragraphs, sections};
 }"""
 
 
@@ -1066,6 +1085,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             content = md[:max_chars]
         raw_headings = data.get("headings") if isinstance(data.get("headings"), list) else []
         raw_paras = data.get("paragraphs") if isinstance(data.get("paragraphs"), list) else []
+        raw_sections = data.get("sections") if isinstance(data.get("sections"), list) else []
         payload = {
             "ok": True,
             "url": page.url,
@@ -1079,8 +1099,9 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             "excerpt": re.sub(r"\s+", " ", text).strip()[:600],
             "links": links[:25],
             "elements": elements,
-            "headings": raw_headings[:16],
-            "paragraphs": raw_paras[:12],
+            "headings": raw_headings[:24],
+            "paragraphs": raw_paras[:24],
+            "sections": raw_sections[:16],
             "engine": "chromium",
             "reused": reused,
         }
@@ -1091,6 +1112,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             payload["kind"] = shaped.get("kind")
             payload["headings"] = shaped.get("headings") or payload["headings"]
             payload["paragraphs"] = shaped.get("paragraphs") or payload["paragraphs"]
+            payload["sections"] = shaped.get("sections") or payload["sections"]
         return 0, payload
 
     elif action == "content":

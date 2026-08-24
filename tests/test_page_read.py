@@ -135,6 +135,57 @@ class TestShapeObserve(unittest.TestCase):
         self.assertEqual(len(hit), 1)
         self.assertIn("agents", hit[0]["text"].lower())
 
+    def test_filter_paragraphs_for_ask(self):
+        hit = page_read.filter_paragraphs(ARTICLE["paragraphs"], "RFC 2606")
+        self.assertEqual(len(hit), 1)
+        self.assertIn("RFC 2606", hit[0])
+
+    def test_read_payload_query_keeps_matching_body(self):
+        snap = {"ok": True, "url": "https://example.com/", **ARTICLE}
+        out = page_read.read_payload(snap, query="RFC 2606")
+        self.assertTrue(out["focused"])
+        self.assertEqual(out["query"], "RFC 2606")
+        self.assertIn("RFC 2606", out["excerpt"])
+        self.assertTrue(out["paragraphs"])
+        self.assertTrue(all("rfc" in p.lower() for p in out["paragraphs"]))
+        self.assertFalse(any("cookie banners" in p.lower() for p in out["paragraphs"]))
+
+    def test_read_payload_section_keeps_one_heading(self):
+        snap = {"ok": True, "url": "https://example.com/", **ARTICLE}
+        out = page_read.read_payload(snap, section="How agents should read")
+        self.assertTrue(out["focused"])
+        self.assertEqual(out["section"], "How agents should read")
+        texts = [h["text"] for h in out["headings"]]
+        self.assertTrue(any("agents" in t.lower() for t in texts))
+        self.assertFalse(any("RFC 2606" in p for p in out["paragraphs"]))
+        self.assertTrue(any("structured read" in p.lower() for p in out["paragraphs"]))
+        heads = [s["heading"] for s in out.get("sections") or []]
+        self.assertTrue(any("agents" in h.lower() for h in heads))
+        self.assertFalse(any("why these names" in h.lower() for h in heads))
+
+    def test_sections_from_markdown_when_missing(self):
+        out = page_read.shape_observe(
+            {
+                "title": "Notes",
+                "markdown": (
+                    "# Example Domains\n\n"
+                    "Intro line that is long enough to count as a real paragraph for sectioning.\n\n"
+                    "## Why these names exist\n\n"
+                    "As described in RFC 2606 and RFC 6761, a number of domains such as example.com "
+                    "are maintained for documentation purposes.\n\n"
+                    "## How agents should read them\n\n"
+                    "A structured read should keep this paragraph and the headings above without chrome."
+                ),
+                "text": "Example Domains Why these names exist Body",
+                "elements": [],
+                "links": [],
+            }
+        )
+        heads = [s["heading"] for s in out["sections"]]
+        self.assertIn("Why these names exist", heads)
+        why = next(s for s in out["sections"] if s["heading"] == "Why these names exist")
+        self.assertTrue(any("RFC 2606" in p for p in why["paragraphs"]))
+
 
 class TestPlanSuggestsRead(unittest.TestCase):
     def test_article_plan_leads_with_read(self):
@@ -153,6 +204,7 @@ class TestPlanSuggestsRead(unittest.TestCase):
         self.assertIn("read", actions)
         self.assertLess(actions.index("read"), actions.index("open"))
         self.assertIn("wick read", next(s["cmd"] for s in plan if s["action"] == "read"))
+        self.assertTrue(any("--section" in (s.get("cmd") or "") for s in plan))
 
 
 class TestWickReadCli(unittest.TestCase):
@@ -183,6 +235,44 @@ class TestWickReadCli(unittest.TestCase):
         snap = wick.snap_payload("https://example.com/")
         self.assertEqual(snap.get("kind"), "article")
         self.assertTrue(snap.get("headings"))
+        focused = handlers["read"]({"q": "RFC 2606"})
+        self.assertTrue(focused.get("focused"))
+        self.assertTrue(all("rfc" in p.lower() for p in focused.get("paragraphs") or []))
+
+    def test_ask_rpc_includes_matching_paragraphs(self):
+        wick = _load_wick()
+
+        def fake_gather(url, **_kw):
+            return {
+                "ok": True,
+                "url": url or "https://example.com/",
+                "title": ARTICLE["title"],
+                "excerpt": ARTICLE["excerpt"],
+                "text": ARTICLE["text"],
+                "headings": ARTICLE["headings"],
+                "paragraphs": ARTICLE["paragraphs"],
+                "links": ARTICLE["links"],
+                "links_all": ARTICLE["links"],
+                "elements": ARTICLE["elements"],
+                "http_ok": True,
+            }
+
+        wick._gather_snap = fake_gather  # type: ignore[method-assign]
+        ask = wick._rpc_handlers()["ask"]({"q": "RFC 2606"})
+        paras = ask.get("paragraphs") or []
+        self.assertTrue(any("RFC 2606" in p for p in paras), ask)
+        self.assertFalse(any("cookie" in p.lower() for p in paras))
+
+    def test_cmd_read_cli_does_not_crash_history(self):
+        wick = _load_wick()
+
+        def fake_gather(url, **_kw):
+            return {"ok": True, "url": url or "https://example.com/", **ARTICLE, "http_ok": True}
+
+        wick._gather_snap = fake_gather  # type: ignore[method-assign]
+        ns = type("NS", (), {"url": "", "here": False, "fail_http": False})()
+        rc = wick.cmd_read(ns)
+        self.assertEqual(rc, 0)
 
 
 if __name__ == "__main__":

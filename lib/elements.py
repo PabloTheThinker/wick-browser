@@ -227,6 +227,16 @@ def plan_suggestions(
             "cmd": read_cmd,
             "why": "structured page read (kind, headings, paragraphs) — prefer this over a markdown dump",
         })
+        section = next(
+            (h.get("text") for h in (headings or []) if int(h.get("level") or 2) >= 2 and h.get("text")),
+            None,
+        )
+        if section:
+            out.append({
+                "action": "read",
+                "cmd": f"{read_cmd} --section {section!r}",
+                "why": f"focused read of the {section!r} section only",
+            })
     out.append({
         "action": "open",
         "cmd": f"wick open {url!r} --max 8000",
