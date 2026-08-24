@@ -23,6 +23,16 @@ if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
 FIXTURE = ROOT / "tests" / "fixtures" / "cu.html"
+_CU_ENV = (
+    "WICK_CHALLENGE_COMPUTER_USE",
+    "WICK_HEADED",
+    "WICK_HEADLESS",
+    "WICK_XVFB",
+    "WAYLAND_DISPLAY",
+    "XDG_SESSION_TYPE",
+    "XDG_CURRENT_DESKTOP",
+    "DESKTOP_SESSION",
+)
 
 
 def _free_port() -> int:
@@ -94,6 +104,17 @@ class TestChromeFixture(unittest.TestCase):
             shutil.rmtree(cls.home, ignore_errors=True)
         except Exception:
             pass
+
+    def setUp(self):
+        self._saved_cu = {k: os.environ.pop(k, None) for k in _CU_ENV}
+        os.environ["WICK_CHALLENGE_COMPUTER_USE"] = "0"
+
+    def tearDown(self):
+        for k in _CU_ENV:
+            os.environ.pop(k, None)
+        for k, v in self._saved_cu.items():
+            if v is not None:
+                os.environ[k] = v
 
     def _run(self, action: str, *args: str) -> dict:
         import chrome_actions as ca
@@ -200,6 +221,9 @@ class TestChromeFixture(unittest.TestCase):
         self.assertNotIn("solver", dump)
 
     def test_click_halts_on_turnstile_without_solving(self):
+        import challenge
+
+        self.assertFalse(challenge.computer_use_allowed())
         url = f"http://127.0.0.1:{self.port}/challenge.html"
         gone = self._run("goto", url)
         self.assertTrue(gone.get("ok"), gone)
