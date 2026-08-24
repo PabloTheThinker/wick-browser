@@ -17,15 +17,18 @@ Agent
 Primary situation report. Prefer this over dumping full markdown every turn.
 
 ```bash
+wick skill                                        # purpose, loop, rules
 wick snap https://example.com/ --profile micro    # tree only (Hermes first look)
 wick snap https://example.com/ --fast             # excerpt + elements
+wick snap                                         # current page after act (reused: true)
 ```
 
 Returns one JSON object with:
 
 - `title`, `excerpt`, `links[]`
 - `elements[]` — interactive targets with `hint` selectors
-- `http_ok`, `timing` (`total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`)
+- `reused` — true when Chromium was already on that page (goto skipped)
+- `http_ok`, `timing` (`total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`, `reused`)
 
 `--profile micro|default|full` sets wait + field budgets. `WICK_SNAP_PROFILE` applies when `--profile` is omitted. `wick snap-many URL URL…` observes several pages on the shared Chromium (serialized so snaps do not race).
 

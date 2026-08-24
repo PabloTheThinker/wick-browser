@@ -60,6 +60,7 @@ def test_tools_export_shape():
         "wick_vault",
         "wick_snap_many",
         "wick_challenge",
+        "wick_skill",
     ):
         assert expected in names
     snap = next(t for t in tools if t["function"]["name"] == "wick_snap")
@@ -68,7 +69,7 @@ def test_tools_export_shape():
     assert params["type"] == "object"
     assert "url" in params["properties"]
     assert "profile" in params["properties"]
-    assert params["required"] == ["url"]
+    assert "url" not in (params.get("required") or [])
 
 
 def test_wick_tools_cli():
@@ -152,7 +153,7 @@ def test_mcp_tools_list_short_names():
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip())
     names = {t["name"] for t in out["result"]["tools"]}
-    for expected in ("snap", "plan", "ask", "act", "vault", "snap_many", "challenge"):
+    for expected in ("snap", "plan", "ask", "act", "vault", "snap_many", "challenge", "skill"):
         assert expected in names
 
 

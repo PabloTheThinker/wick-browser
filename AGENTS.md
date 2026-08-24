@@ -2,12 +2,14 @@
 
 Wick is a **standalone browser for agents** — Chromium plus one JSON surface. Not a human GUI with an API bolted on, and not a Lightpanda wrapper. See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
 
+Load **`wick skill`** (or MCP `skill` / `wick_skill`) once at harness start — purpose, loop, and hard rules in one JSON object. Cursor agents: [skills/wick/SKILL.md](skills/wick/SKILL.md).
+
 ## Recommended loop: snap → plan → ask → act
 
-1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) via Chromium (`engine: chromium`). 
-2. **`wick plan URL --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
-3. **`wick ask URL --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
-4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Computer-use: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON). After a challenge widget: `wick act login URL --after-challenge` waits until it is gone, then fills.
+1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) via Chromium (`engine: chromium`). After `act`, omit the URL (`wick snap` / `wick snap --here`) so Wick reuses the current tab instead of re-goto.
+2. **`wick plan [URL] --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
+3. **`wick ask [URL] --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
+4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Use **this** snap's `elements[].hint`. Search: fill the searchbox hint, then `wick act press Enter` (do not click a generic Go). After a click that navigates: `wait_url`, then `wick snap` with no URL. Computer-use is last resort: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON). After a challenge widget: `wick act login URL --after-challenge` waits until it is gone, then fills.
 5. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
 
 Still available when you need them: `wick elements URL` (dense target list) and `wick open URL --fast` (full markdown, the long read). **`wick observe`** is an alias for **`wick snap`**.
@@ -47,7 +49,7 @@ wick rpc stdio      # one JSON line in, one JSON object out
 {"id": 1, "ok": true, "title": "Example Domain", "untrusted_content": true, ...}
 ```
 
-Known RPC commands: `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
+Known RPC commands: `skill`, `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
 
 ## Untrusted content (observe outputs)
 
@@ -82,10 +84,11 @@ Every command prints **one JSON object** (unless human help text).
 
 ```bash
 wick snap https://example.com/ --profile micro    # tree only, cheapest first look
-wick snap https://example.com/ --fast             # default: tree + excerpt in parallel
+wick snap https://example.com/ --fast             # default: tree + excerpt
+wick snap                                         # current page (after act; reused: true)
 ```
 
-Returns: `title`, `excerpt`, `links[]`, `elements[]` (interactive), `timing`.
+Returns: `title`, `excerpt`, `links[]`, `elements[]` (interactive), `timing`, `reused` (true when goto was skipped).
 
 ```json
 {"id": 12, "role": "link", "name": "More information", "hint": "role=link[name=\"More information\"]", "interactive": true}
@@ -119,9 +122,11 @@ Snap + fuzzy filter: query words are matched as case-insensitive substrings agai
 
 ```bash
 wick act goto https://example.com/
-wick act click 'role=link[name="More information"]'   # role= hints work directly
-wick act fill "css=input[name=q]" "query"
+wick act click 'role=link[name="More information"]'   # role= hints from THIS snap
+wick act fill 'role=searchbox[name="Search"]' "query"
+wick act press Enter                                  # search: fill + Enter, not Go
 wick act wait_url "example.com" 15000                  # wait until URL contains fragment
+wick snap                                             # re-observe here — no second goto
 wick act scroll down 1000
 wick act pdf /tmp/out.pdf
 ```
@@ -208,7 +213,8 @@ CAPTCHA / Cloudflare / Turnstile / GeeTest / Friendly Captcha / AWS WAF pages ha
 | `--profile default` / `--fast` | excerpt + links + elements (~1200ms) |
 | `--profile full` | longer wait + larger excerpt (~2000ms) |
 | `wick snap-many URL URL…` | many URLs, one Chromium page (serialized) |
-| observe cache | snap/plan/ask reuse one fetch for ~8s (`WICK_OBSERVE_CACHE=0` to disable) |
+| same-tab snap | skip goto when Chromium is already on that URL (`reused: true`) |
+| observe cache | snap/plan/ask reuse one fetch for ~8s; cleared after a successful `act` |
 | `WICK_SNAP_PROFILE` | default profile when `--profile` is omitted |
 
 `timing` on snap: `total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`.

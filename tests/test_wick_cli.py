@@ -196,6 +196,63 @@ def test_gather_snap_chromium_fallback_is_single_observe(monkeypatch):
     assert out["elements"][0]["hint"] == 'role=searchbox[name="Search Amazon"]'
 
 
+def test_chrome_observe_fetch_here_without_chrome(monkeypatch):
+    monkeypatch.setattr(wick, "chrome_up", lambda: False)
+    out = wick.chrome_observe_fetch("here")
+    assert out["ok"] is False
+    assert out["error"] == "no_current_page"
+    blank = wick.chrome_observe_fetch("")
+    assert blank["error"] == "no_current_page"
+
+
+def test_gather_snap_here_skips_cache_and_passes_reused(monkeypatch):
+    seen: list[str] = []
+
+    def fake_observe(url, dump="markdown", max_chars=12000, wait_ms=2000):
+        seen.append(url)
+        return {
+            "ok": True,
+            "url": "https://example.com/",
+            "title": "Example Domain",
+            "content": "# Example Domain\n\nHello",
+            "excerpt": "Hello",
+            "links": [],
+            "elements": [],
+            "http_ok": True,
+            "http_status": 200,
+            "engine": "chromium",
+            "ms": 8,
+            "chars": 20,
+            "reused": True,
+        }
+
+    monkeypatch.delenv("WICK_ENGINE", raising=False)
+    monkeypatch.setattr(wick, "chrome_observe_fetch", fake_observe)
+    monkeypatch.setattr(wick, "wick_observe_cache", None)
+    out = wick._gather_snap("here", profile="default")
+    assert seen == ["here"]
+    assert out["ok"] is True
+    assert out["reused"] is True
+    assert out["url"] == "https://example.com/"
+    payload = wick.snap_payload("here")
+    assert payload["ok"] is True
+    assert payload.get("reused") is True
+    assert "here" in (payload.get("hint") or "").lower() or "current" in (payload.get("hint") or "").lower()
+
+
+def test_rpc_snap_accepts_omitted_url(monkeypatch):
+    monkeypatch.setattr(
+        wick,
+        "snap_payload",
+        lambda url, **_kw: {"ok": True, "url": url or "https://example.com/", "reused": True},
+    )
+    handlers = wick._rpc_handlers()
+    out = handlers["snap"]({})
+    assert out["ok"] is True
+    skill = handlers["skill"]({})
+    assert skill["mode"] == "agent_skill"
+
+
 def test_chrome_launch_mode_default_is_headless(monkeypatch):
     monkeypatch.delenv("WICK_HEADED", raising=False)
     monkeypatch.delenv("WICK_HEADLESS", raising=False)

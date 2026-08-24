@@ -944,15 +944,35 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
         dump = (args[1] if len(args) > 1 else "markdown") or "markdown"
         max_chars = int(args[2]) if len(args) > 2 else 12000
         wait_ms = int(args[3]) if len(args) > 3 else 1200
-        if start_url:
+        if wick_origins is not None:
+            here = wick_origins.is_here_url(start_url)
+        else:
+            here = (not start_url) or str(start_url).strip() in {".", "here", "--here"}
+        reused = False
+        if here:
+            live = page.url or ""
+            blank = (not live) or live.startswith("about:") or "chrome://new" in live.lower()
+            if blank:
+                return 1, {
+                    "ok": False,
+                    "error": "no_current_page",
+                    "url": live,
+                    "hint": "wick act goto URL first, then wick snap",
+                }
+            reused = True
+        elif start_url:
             start_url, err = _guard_nav_url(start_url)
             if err:
                 return 1, err
-            page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
-            try:
-                page.wait_for_timeout(max(0, min(wait_ms, 4000)))
-            except Exception:
-                pass
+            live = page.url or ""
+            if wick_origins is not None and wick_origins.same_observe_target(live, start_url):
+                reused = True
+            else:
+                page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.wait_for_timeout(max(0, min(wait_ms, 4000)))
+                except Exception:
+                    pass
         data: dict = {}
         try:
             data = page.evaluate(_OBSERVE_JS) or {}
@@ -1014,6 +1034,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             "links": links[:25],
             "elements": elements,
             "engine": "chromium",
+            "reused": reused,
         }
 
     elif action == "content":

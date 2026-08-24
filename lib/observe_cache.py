@@ -79,6 +79,21 @@ def get(key: str) -> dict[str, Any] | None:
     return out
 
 
+def clear() -> int:
+    """Drop cached snaps. Call after act so the next observe is live."""
+    d = _home() / "observe-cache"
+    if not d.is_dir():
+        return 0
+    n = 0
+    for p in d.glob("*.json"):
+        try:
+            p.unlink()
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def put(key: str, payload: dict[str, Any]) -> None:
     if not enabled() or ttl_seconds() <= 0:
         return

@@ -7,13 +7,15 @@ Not a human browser with a side door for bots — a tool built so **agents** can
 *Standalone Chromium. One JSON surface. No extra browser binary.*
 
 ```bash
+wick skill                                             # purpose + loop + rules (harness start)
 wick snap https://example.com/ --profile micro         # cheapest observe (tree only)
 wick plan https://example.com/ --fast                  # suggested next actions (cmd + why)
 wick ask  https://example.com/ --q "more information"  # filter targets by query — no LLM
 wick act  click 'role=link[name="More information"]'   # act: hints resolve directly
+wick snap                                              # re-observe here (no second goto)
 ```
 
-**Agents:** start with [AGENTS.md](AGENTS.md). Hermes / Claude / ChatGPT / Grok: [docs/HERMES.md](docs/HERMES.md).
+**Agents:** start with [AGENTS.md](AGENTS.md) and [skills/wick/SKILL.md](skills/wick/SKILL.md). Hermes / Claude / ChatGPT / Grok: [docs/HERMES.md](docs/HERMES.md).
 
 ## Why Wick
 
@@ -56,11 +58,13 @@ Data directory: `~/.wick/` (override with `WICK_HOME`).
 ```bash
 # Observe & plan (Chromium)
 wick ensure
+wick skill                    # compact agent skill (purpose, loop, rules)
 wick snap URL --profile micro # cheapest situation report (tree only)
-wick snap URL --fast          # tree + excerpt in parallel
-wick snap-many URL URL…       # parallel observe
-wick plan URL --fast          # suggested next actions
-wick ask URL --q "terms"      # filter links/elements by query
+wick snap URL --fast          # tree + excerpt
+wick snap                     # current page after act (skip goto)
+wick snap-many URL URL…       # serialized observe on one Chromium
+wick plan [URL] --fast        # suggested next actions
+wick ask [URL] --q "terms"    # filter links/elements by query
 wick elements URL             # interactive hints
 wick open URL                 # full markdown
 wick mcp                      # MCP stdio (Hermes, Claude, Cursor)

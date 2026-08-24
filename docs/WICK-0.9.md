@@ -54,10 +54,12 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 ## Agent loop
 
 ```bash
+wick skill
 wick vault set example --username me --url https://example.com/login
 wick snap https://example.com/login --fast
 wick vault suggest --url https://example.com/login
 wick act login https://example.com/login
+wick snap                          # here — no second goto
 # or after computer-use on a widget:
 wick act login https://example.com/login --after-challenge
 ```

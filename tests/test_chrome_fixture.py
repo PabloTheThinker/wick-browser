@@ -180,6 +180,17 @@ class TestChromeFixture(unittest.TestCase):
         self.assertTrue(filled.get("ok"), filled)
         self.assertEqual(self.page.locator("#q").input_value(), "usb-c cable")
 
+    def test_observe_reuses_current_page_and_here(self):
+        gone = self._run("goto", self.base)
+        self.assertTrue(gone.get("ok"), gone)
+        same = self._run("observe", self.base, "markdown", "4000", "50")
+        self.assertTrue(same.get("ok"), same)
+        self.assertTrue(same.get("reused"), same)
+        here = self._run("observe", "here", "markdown", "4000", "50")
+        self.assertTrue(here.get("ok"), here)
+        self.assertTrue(here.get("reused"), here)
+        self.assertIn("cu.html", here.get("url") or "")
+
     def test_observe_returns_role_hints_for_agents(self):
         out = self._run("observe", self.base, "markdown", "4000", "200")
         self.assertTrue(out.get("ok"), out)

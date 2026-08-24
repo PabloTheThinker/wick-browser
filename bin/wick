@@ -88,6 +88,10 @@ try:
     import challenge as wick_challenge
 except Exception:
     wick_challenge = None  # type: ignore
+try:
+    import agent_skill as wick_agent_skill
+except Exception:
+    wick_agent_skill = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -459,6 +463,13 @@ def stop_one(name: str, port: int) -> dict:
 
 
 
+def _is_here_observe(url: str | None) -> bool:
+    if wick_origins is not None:
+        return wick_origins.is_here_url(url)
+    s = str(url or "").strip()
+    return s == "" or s in {".", "here", "--here"}
+
+
 def chrome_observe_fetch(
     url: str,
     dump: str = "markdown",
@@ -466,6 +477,14 @@ def chrome_observe_fetch(
     wait_ms: int = 2000,
 ) -> dict:
     """Standalone observe: Chromium extracts title, excerpt, links, role= hints."""
+    here = _is_here_observe(url)
+    if here and not chrome_up():
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "no_current_page",
+            "hint": "wick act goto URL first, then wick snap (no URL)",
+        }
     if not VENV_PY.exists():
         return {
             "ok": False,
@@ -488,13 +507,14 @@ def chrome_observe_fetch(
     env["WICK_CHROME_PORT"] = str(CHROME_PORT)
     env["WICK_HOME"] = str(HOME)
     t0 = time.time()
+    observe_url = "here" if here else url
     try:
         proc = subprocess.run(
             [
                 str(VENV_PY),
                 str(ROOT / "lib" / "chrome_actions.py"),
                 "observe",
-                url,
+                observe_url,
                 dump or "markdown",
                 str(int(max_chars or 12000)),
                 str(int(wait_ms or 2000)),
@@ -1376,6 +1396,27 @@ def _resolve_act_rest(action: str, rest: list[str]) -> tuple[list[str] | None, d
     return list(rest), None
 
 
+def _invalidate_observe_cache() -> None:
+    if wick_observe_cache is None:
+        return
+    try:
+        wick_observe_cache.clear()
+    except Exception:
+        pass
+
+
+def _cli_observe_url(args: argparse.Namespace) -> str:
+    if getattr(args, "here", False):
+        return ""
+    return str(getattr(args, "url", None) or "").strip()
+
+
+def _rpc_observe_url(args: dict) -> str:
+    if args.get("here"):
+        return ""
+    return str(args.get("url") or "").strip()
+
+
 def cmd_act(args: argparse.Namespace) -> int:
     """Browser-Use-shaped Chromium actions (goto/click/fill/press/wait/eval/content)."""
     if not chrome_up():
@@ -1413,8 +1454,13 @@ def cmd_act(args: argparse.Namespace) -> int:
         if "filled" in result:
             result["filled"] = rest[0] if rest else result.get("filled")
         print(json.dumps(result, ensure_ascii=False))
+        if result.get("ok"):
+            _invalidate_observe_cache()
         return 0 if result.get("ok") else 1
-    return subprocess.call(cmd, env=env, cwd=str(ROOT))
+    rc = subprocess.call(cmd, env=env, cwd=str(ROOT))
+    if rc == 0:
+        _invalidate_observe_cache()
+    return rc
 
 
 def cmd_vault(args: argparse.Namespace) -> int:
@@ -2144,6 +2190,7 @@ def _gather_snap_chromium(
         "fast": False,
         "engine": obs.get("engine") or "chromium",
         "profile": prof,
+        "reused": bool(obs.get("reused")),
         "timing": {
             "total_ms": int((time.time() - t0) * 1000),
             "tree_ms": 0,
@@ -2152,6 +2199,7 @@ def _gather_snap_chromium(
             "profile": prof,
             "parallel": False,
             "engine": "chromium",
+            "reused": bool(obs.get("reused")),
         },
     }
     if wick_observe_cache is not None and cache_key:
@@ -2203,8 +2251,17 @@ def _gather_snap(
     md_max = min(max_chars, 8000) if fast else max_chars
     tree_cap = min(tree_max, 40000) if fast else tree_max
 
+    here = _is_here_observe(url)
+    if here and observe_uses_lightpanda():
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "here_requires_chromium",
+            "hint": "here-snap is Chromium-only. Unset WICK_ENGINE=lightpanda.",
+        }
+
     cache_key = None
-    if wick_observe_cache is not None:
+    if wick_observe_cache is not None and not here:
         cache_key = wick_observe_cache.cache_key(
             url=url,
             fast=bool(fast),
@@ -2420,10 +2477,20 @@ def snap_payload(
     )
     if not snap.get("ok"):
         return snap
+    reused = bool(snap.get("reused"))
+    hint = (
+        "Use THIS snap's elements[].hint with wick act click/fill. "
+        "After a click that navigates: wick snap (no URL). "
+        "Search: fill the searchbox hint, then wick act press Enter."
+    )
+    if reused:
+        hint = "Current Chromium page reused (no goto). " + hint
+    elif _is_here_observe(url):
+        hint = "Snap of the current page. " + hint
     out = {
         **snap,
         "mode": "agent_snap",
-        "hint": "Use elements[].hint with wick act click/fill on Chromium path; or wick open for full markdown.",
+        "hint": hint,
     }
     if not full:
         out.pop("markdown", None)
@@ -2488,7 +2555,7 @@ def cmd_snap_many(args: argparse.Namespace) -> int:
 def cmd_snap(args: argparse.Namespace) -> int:
     """One-shot agent snapshot: status, title, markdown, links, interactive elements."""
     out = snap_payload(
-        args.url,
+        _cli_observe_url(args),
         max_chars=args.max,
         excerpt_len=args.excerpt,
         elements_limit=args.elements,
@@ -2513,8 +2580,9 @@ def cmd_snap(args: argparse.Namespace) -> int:
 
 def cmd_plan(args: argparse.Namespace) -> int:
     """Goal-agnostic action suggestions from snap (open, click hints, screenshot, …)."""
+    target = _cli_observe_url(args)
     snap = _gather_snap(
-        args.url,
+        target,
         max_chars=args.max,
         excerpt_len=args.excerpt,
         elements_limit=args.elements,
@@ -2532,7 +2600,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     suggestions = []
     if wick_elements is not None:
         suggestions = wick_elements.plan_suggestions(
-            url=snap.get("url") or args.url,
+            url=snap.get("url") or target,
             title=snap.get("title"),
             excerpt=snap.get("excerpt") or "",
             links=snap.get("links_all") or snap.get("links") or [],
@@ -2544,13 +2612,14 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "product": "wick",
         "version": VERSION,
         "mode": "agent_plan",
-        "url": snap.get("url") or args.url,
+        "url": snap.get("url") or target,
         "http_ok": snap.get("http_ok"),
         "title": snap.get("title"),
         "excerpt": snap.get("excerpt"),
         "element_count": snap.get("element_count"),
         "link_count": snap.get("link_count"),
         "ms": snap.get("ms"),
+        "reused": bool(snap.get("reused")),
         "suggestions": suggestions,
         "hint": "Suggestions are goal-agnostic; pick actions matching your task.",
         "strip": snap.get("strip"),
@@ -2568,8 +2637,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if not args.q:
         print(json.dumps({"ok": False, "product": "wick", "error": "missing_query", "hint": "wick ask URL --q \"search terms\""}))
         return 2
+    target = _cli_observe_url(args)
     snap = _gather_snap(
-        args.url,
+        target,
         max_chars=args.max,
         excerpt_len=args.excerpt,
         elements_limit=args.elements,
@@ -2599,7 +2669,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "product": "wick",
         "version": VERSION,
         "mode": "agent_ask",
-        "url": snap.get("url") or args.url,
+        "url": snap.get("url") or target,
         "http_ok": snap.get("http_ok"),
         "title": snap.get("title"),
         "query": args.q,
@@ -2665,12 +2735,21 @@ def cmd_tools(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skill(_: argparse.Namespace) -> int:
+    """Compact purpose, loop, and rules for agent harnesses."""
+    if wick_agent_skill is None:
+        print(json.dumps({"ok": False, "error": "agent_skill_missing"}))
+        return 1
+    print(json.dumps(wick_agent_skill.skill_payload(VERSION), ensure_ascii=False))
+    return 0
+
+
 def _rpc_handlers() -> dict:
   """Build RPC cmd -> handler map (returns JSON-serializable dicts)."""
 
   def _snap(args: dict) -> dict:
       return snap_payload(
-          args["url"],
+          _rpc_observe_url(args),
           max_chars=int(args.get("max") or 12000),
           excerpt_len=int(args.get("excerpt") or 600),
           elements_limit=int(args.get("elements") or 40),
@@ -2685,8 +2764,9 @@ def _rpc_handlers() -> dict:
       )
 
   def _plan(args: dict) -> dict:
+      target = _rpc_observe_url(args)
       snap = _gather_snap(
-          args["url"],
+          target,
           max_chars=int(args.get("max") or 12000),
           excerpt_len=int(args.get("excerpt") or 600),
           elements_limit=int(args.get("elements") or 40),
@@ -2703,7 +2783,7 @@ def _rpc_handlers() -> dict:
       suggestions = []
       if wick_elements is not None:
           suggestions = wick_elements.plan_suggestions(
-              url=snap.get("url") or args["url"],
+              url=snap.get("url") or target,
               title=snap.get("title"),
               excerpt=snap.get("excerpt") or "",
               links=snap.get("links_all") or snap.get("links") or [],
@@ -2715,10 +2795,11 @@ def _rpc_handlers() -> dict:
           "product": "wick",
           "version": VERSION,
           "mode": "agent_plan",
-          "url": snap.get("url") or args["url"],
+          "url": snap.get("url") or target,
           "http_ok": snap.get("http_ok"),
           "title": snap.get("title"),
           "excerpt": snap.get("excerpt"),
+          "reused": bool(snap.get("reused")),
           "suggestions": suggestions,
           "strip": snap.get("strip"),
       }
@@ -2728,8 +2809,9 @@ def _rpc_handlers() -> dict:
       q = args.get("q") or ""
       if not q:
           return {"ok": False, "error": "missing_query"}
+      target = _rpc_observe_url(args)
       snap = _gather_snap(
-          args["url"],
+          target,
           max_chars=int(args.get("max") or 12000),
           excerpt_len=int(args.get("excerpt") or 600),
           elements_limit=int(args.get("elements") or 20),
@@ -2755,7 +2837,7 @@ def _rpc_handlers() -> dict:
           "product": "wick",
           "version": VERSION,
           "mode": "agent_ask",
-          "url": snap.get("url") or args["url"],
+          "url": snap.get("url") or target,
           "http_ok": snap.get("http_ok"),
           "query": q,
           "links": matched_links,
@@ -2857,6 +2939,8 @@ def _rpc_handlers() -> dict:
           result["ok"] = False
       if vmeta and vmeta.get("vault_resolved"):
           result["vault"] = {k: vmeta[k] for k in ("ref", "backend", "chars") if k in vmeta}
+      if result.get("ok"):
+          _invalidate_observe_cache()
       return result
 
   def _vault(args: dict) -> dict:
@@ -2993,6 +3077,11 @@ def _rpc_handlers() -> dict:
           return {"ok": False, "error": "challenge_module_missing"}
       return wick_challenge.probe(str(args.get("url") or ""))
 
+  def _skill(_args: dict) -> dict:
+      if wick_agent_skill is None:
+          return {"ok": False, "error": "agent_skill_missing"}
+      return wick_agent_skill.skill_payload(VERSION)
+
   def _version(_args: dict) -> dict:
       return {"ok": True, "product": "wick", "version": VERSION}
 
@@ -3007,6 +3096,7 @@ def _rpc_handlers() -> dict:
       }
 
   return {
+      "skill": _skill,
       "snap": _snap,
       "observe": _snap,
       "plan": _plan,
@@ -3181,10 +3271,24 @@ def _add_observe_profile(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_observe_url(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "url",
+        nargs="?",
+        default="",
+        help="Absolute URL. Omit, pass here, or use --here to snap the current Chromium page.",
+    )
+    p.add_argument(
+        "--here",
+        action="store_true",
+        help="Observe the current Chromium page (do not goto)",
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="wick",
-        description="Wick — agent browser. Fast. Precise. No paid API. The standard for machine operators.",
+        description="Wick — standalone Chromium browser for agents. snap → plan → act. One JSON surface.",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -3386,7 +3490,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("snap", help="Agent one-shot snapshot: title, excerpt, links, elements")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
     p.add_argument("--elements", type=int, default=40)
@@ -3402,7 +3506,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("observe", help="Alias for snap (agent observe snapshot)")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
     p.add_argument("--elements", type=int, default=40)
@@ -3433,7 +3537,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("plan", help="Goal-agnostic action suggestions from snap")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
     p.add_argument("--elements", type=int, default=40)
@@ -3449,7 +3553,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("ask", help="Snap + fuzzy filter links/elements by query (no LLM)")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--q", required=True, help="search terms (word substring match)")
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
@@ -3507,6 +3611,7 @@ def main() -> int:
     p.add_argument("expr")
 
     sub.add_parser("tools", help="Export OpenAI-style function tool schemas (snap/plan/ask/…)")
+    sub.add_parser("skill", help="Compact purpose, loop, and rules for agent harnesses")
 
     p = sub.add_parser("rpc", help="JSON-lines stdio RPC for agent harnesses")
     p.add_argument("mode", nargs="?", default="stdio", choices=["stdio"])
@@ -3579,6 +3684,7 @@ def main() -> int:
         "snap-many": cmd_snap_many,
         "elements": cmd_elements,
         "tools": cmd_tools,
+        "skill": cmd_skill,
         "rpc": cmd_rpc,
         "mcp": cmd_mcp,
         "plan": cmd_plan,
