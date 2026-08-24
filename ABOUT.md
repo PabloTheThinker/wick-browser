@@ -17,6 +17,8 @@ A human browser optimizes for pixels. An agent needs structure: titles, excerpts
 ## The loop: observe → plan → ask → act
 
 ```bash
+wick                                    # JSON catalog — the CLI is the full surface
+wick call snap '{"url":"https://example.com/","fast":true}'
 wick snap https://example.com/ --fast   # situation report: kind, excerpt, headings, elements
 wick read --q "terms"                   # structured body; --section keeps one heading
 wick plan https://example.com/ --fast   # ranked next steps, each with a ready-to-run cmd

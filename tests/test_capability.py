@@ -59,6 +59,9 @@ class TestProfiles(EnvCase):
         self.assertIsNone(capability.deny("approve"))
         self.assertIsNone(capability.deny("skill"))
         self.assertIsNone(capability.deny("read"))
+        self.assertIsNone(capability.deny("commands"))
+        self.assertIsNone(capability.deny("call"))
+        self.assertIsNone(capability.deny("help"))
 
     def test_safe_act_allows_click_blocks_fill(self):
         os.environ["WICK_PROFILE"] = "safe-act"

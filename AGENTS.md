@@ -2,10 +2,13 @@
 
 Wick is a **standalone browser for agents** — Chromium plus one JSON surface. Not a human GUI with an API bolted on, and not a Lightpanda wrapper. See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
 
-Load **`wick skill`** (or MCP `skill` / `wick_skill`) once at harness start — purpose, loop, and hard rules in one JSON object. Cursor agents: [skills/wick/SKILL.md](skills/wick/SKILL.md).
+The **CLI is the full product**. An agent with only a shell can do everything: `wick commands` (or just `wick`) prints the catalog; `wick call CMD '{json}'` uses the same args as RPC/tools. MCP / `wick rpc` are optional sockets.
+
+Load **`wick skill`** once at harness start — purpose, loop, and hard rules in one JSON object. Cursor agents: [skills/wick/SKILL.md](skills/wick/SKILL.md).
 
 ## Recommended loop: snap → plan → ask → act
 
+0. **`wick commands`** — JSON catalog (`cli`, `example` argv, tool/RPC names). `wick call snap '{"url":"https://example.com/","fast":true}'` is the same snap as the CLI flags.
 1. **`wick snap URL --fast`** — situation report (`kind`, title, excerpt, headings, links, interactive elements) via Chromium. After `act`, omit the URL (`wick snap` / `wick snap --here`) so Wick reuses the current tab instead of re-goto.
 2. **`wick read [URL]`** — structured body (headings + paragraphs + sections). Use this when the excerpt is not enough. Add `--q terms` or `--section Heading` to keep only the matching prose. Prefer it over `wick open` (the long markdown dump).
 3. **`wick plan [URL] --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
@@ -50,7 +53,7 @@ wick rpc stdio      # one JSON line in, one JSON object out
 {"id": 1, "ok": true, "title": "Example Domain", "untrusted_content": true, ...}
 ```
 
-Known RPC commands: `skill`, `snap`, `read`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
+Known RPC commands: `skill`, `commands`, `snap`, `read`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops). Prefer the CLI (`wick commands` / `wick call`) when the harness has a shell.
 
 ## Untrusted content (observe outputs)
 

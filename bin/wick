@@ -96,6 +96,10 @@ try:
     import page_read as wick_page_read
 except Exception:
     wick_page_read = None  # type: ignore
+try:
+    import cli_catalog as wick_cli_catalog
+except Exception:
+    wick_cli_catalog = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -2833,6 +2837,71 @@ def cmd_skill(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_commands(_: argparse.Namespace) -> int:
+    """JSON catalog of CLI commands (same coverage as tools/RPC)."""
+    if wick_cli_catalog is None:
+        print(json.dumps({"ok": False, "error": "cli_catalog_missing"}))
+        return 1
+    print(json.dumps(wick_cli_catalog.commands_export(VERSION), ensure_ascii=False))
+    return 0
+
+
+def cmd_help(args: argparse.Namespace) -> int:
+    return cmd_commands(args)
+
+
+def cmd_call(args: argparse.Namespace) -> int:
+    """One-shot RPC via CLI: wick call snap '{json}'."""
+    name = str(getattr(args, "name", None) or "").strip()
+    raw = getattr(args, "payload", None)
+    if not name:
+        return cmd_commands(args)
+    payload: dict = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            print(json.dumps({
+                "ok": False,
+                "product": "wick",
+                "error": "bad_json",
+                "soft": True,
+                "detail": str(e)[:160],
+                "hint": "wick call CMD '{...json object...}'",
+            }, ensure_ascii=False))
+            return 2
+        if not isinstance(parsed, dict):
+            print(json.dumps({
+                "ok": False,
+                "product": "wick",
+                "error": "args_must_be_object",
+                "soft": True,
+            }, ensure_ascii=False))
+            return 2
+        payload = parsed
+    handlers = _rpc_handlers()
+    key = name
+    if wick_cli_catalog is not None:
+        key = wick_cli_catalog.normalize_cmd(name)
+    if key not in handlers and name in handlers:
+        key = name
+    if key == "help":
+        key = "commands"
+    if key not in handlers:
+        print(json.dumps({
+            "ok": False,
+            "product": "wick",
+            "error": "unknown_cmd",
+            "soft": True,
+            "cmd": name,
+            "hint": "wick commands — or wick call snap|read|plan|ask|act|vault|session|…",
+        }, ensure_ascii=False))
+        return 1
+    out = handlers[key](payload)
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
+
+
 def _rpc_handlers() -> dict:
   """Build RPC cmd -> handler map (returns JSON-serializable dicts)."""
 
@@ -3210,6 +3279,11 @@ def _rpc_handlers() -> dict:
           return {"ok": False, "error": "agent_skill_missing"}
       return wick_agent_skill.skill_payload(VERSION)
 
+  def _commands(_args: dict) -> dict:
+      if wick_cli_catalog is None:
+          return {"ok": False, "error": "cli_catalog_missing"}
+      return wick_cli_catalog.commands_export(VERSION)
+
   def _version(_args: dict) -> dict:
       return {"ok": True, "product": "wick", "version": VERSION}
 
@@ -3225,6 +3299,8 @@ def _rpc_handlers() -> dict:
 
   return {
       "skill": _skill,
+      "commands": _commands,
+      "help": _commands,
       "read": _read,
       "snap": _snap,
       "observe": _snap,
@@ -3414,12 +3490,27 @@ def _add_observe_url(p: argparse.ArgumentParser) -> None:
     )
 
 
+class _AgentParser(argparse.ArgumentParser):
+    """Argparse that stays on the JSON contract when an agent mistypes a command."""
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        print(json.dumps({
+            "ok": False,
+            "product": "wick",
+            "error": "cli_error",
+            "soft": True,
+            "hint": (message or "")[:240],
+            "try": ["wick commands", "wick skill", "wick call version"],
+        }, ensure_ascii=False))
+        raise SystemExit(2)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(
+    ap = _AgentParser(
         prog="wick",
         description="Wick — standalone Chromium browser for agents. snap → plan → act. One JSON surface.",
     )
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd", required=False)
 
     sub.add_parser("version", help="Print wick version and engine status")
     sub.add_parser("doctor")
@@ -3758,6 +3849,13 @@ def main() -> int:
 
     sub.add_parser("tools", help="Export OpenAI-style function tool schemas (snap/plan/ask/…)")
     sub.add_parser("skill", help="Compact purpose, loop, and rules for agent harnesses")
+    sub.add_parser("commands", help="JSON catalog of CLI commands for shell-only agents")
+    sub.add_parser("help", help="Alias of commands (JSON, not argparse text)")
+
+    p = sub.add_parser("call", help="One-shot RPC via CLI: wick call snap '{json}'")
+    p.add_argument("name", nargs="?", default="", help="snap / read / act / vault / … (or wick_snap)")
+    p.add_argument("payload", nargs="?", default="", help="JSON object of the same args as RPC/tools")
+    _add_json_only(p)
 
     p = sub.add_parser("rpc", help="JSON-lines stdio RPC for agent harnesses")
     p.add_argument("mode", nargs="?", default="stdio", choices=["stdio"])
@@ -3772,6 +3870,8 @@ def main() -> int:
     sub.add_parser("install-engine", help="Install Playwright Chromium (standalone engine)")
 
     args = ap.parse_args()
+    if not getattr(args, "cmd", None):
+        return cmd_commands(args)
     if wick_capability is not None:
         session_action = getattr(args, "action", None) if args.cmd == "session" else None
         if session_action == "export" and getattr(args, "reveal", False):
@@ -3832,6 +3932,9 @@ def main() -> int:
         "elements": cmd_elements,
         "tools": cmd_tools,
         "skill": cmd_skill,
+        "commands": cmd_commands,
+        "help": cmd_help,
+        "call": cmd_call,
         "rpc": cmd_rpc,
         "mcp": cmd_mcp,
         "plan": cmd_plan,

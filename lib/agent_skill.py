@@ -31,6 +31,8 @@ RULES = [
 ]
 
 COMMANDS = {
+    "catalog": "wick commands   # or just: wick",
+    "call": "wick call snap '{\"url\":\"https://example.com/\",\"fast\":true}'",
     "observe": "wick snap [URL] --fast   # omit URL after act",
     "read": "wick read [URL] [--q terms] [--section Heading]",
     "plan": "wick plan [URL] --fast",
@@ -52,5 +54,10 @@ def skill_payload(version: str) -> dict[str, Any]:
         "loop": list(LOOP),
         "rules": list(RULES),
         "commands": dict(COMMANDS),
+        "surface": "cli",
+        "hint": (
+            "The CLI is the full surface. Run wick commands for argv. "
+            "MCP/RPC are optional sockets, not required."
+        ),
         "untrusted_content": False,
     }

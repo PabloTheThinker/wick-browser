@@ -7,6 +7,8 @@ Not a human browser with a side door for bots — a tool built so **agents** can
 *Standalone Chromium. One JSON surface. No extra browser binary.*
 
 ```bash
+wick                                                   # JSON catalog (same as wick commands)
+wick call snap '{"url":"https://example.com/","fast":true}'
 wick skill                                             # purpose + loop + rules (harness start)
 wick snap https://example.com/ --profile micro         # cheapest observe (tree only)
 wick read                                              # structured body after snap

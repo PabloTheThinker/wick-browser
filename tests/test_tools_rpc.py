@@ -154,7 +154,7 @@ def test_mcp_tools_list_short_names():
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip())
     names = {t["name"] for t in out["result"]["tools"]}
-    for expected in ("snap", "plan", "ask", "act", "vault", "snap_many", "challenge", "skill", "read"):
+    for expected in ("snap", "plan", "ask", "act", "vault", "snap_many", "challenge", "skill", "read", "commands"):
         assert expected in names
 
 

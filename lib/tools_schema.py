@@ -13,6 +13,10 @@ try:
     import agent_skill as wick_skill
 except Exception:
     wick_skill = None  # type: ignore
+try:
+    import cli_catalog as wick_cli_catalog
+except Exception:
+    wick_cli_catalog = None  # type: ignore
 
 URL_PROP = {
     "type": "string",
@@ -374,8 +378,10 @@ def tools_export(version: str) -> dict[str, Any]:
         "loop": loop,
         "rules": rules,
         "tools": WICK_TOOLS,
+        "cli": wick_cli_catalog.cli_map() if wick_cli_catalog is not None else {},
         "hint": (
-            "Call wick_skill once, then wick_snap (omit url after act). "
-            "ChatGPT/Grok: load tools[] then wick rpc stdio. Claude/Hermes/Cursor: wick mcp."
+            "Shell-only: wick commands, then run the cli strings (one JSON object each). "
+            "wick call CMD '{json}' uses these same args. "
+            "Optional sockets: ChatGPT/Grok wick rpc stdio; Claude/Hermes/Cursor wick mcp."
         ),
     }

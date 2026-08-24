@@ -12,7 +12,7 @@ This page is the harness map. Examples stay on `https://example.com/` only.
 | **Claude** (Desktop / Cursor / API) | MCP stdio (`wick mcp`) or CLI | `snap --profile micro` | `act click 'role=…'` |
 | **ChatGPT** (function calling) | `wick tools` → OpenAI `tools[]` + `wick rpc stdio` | `wick_snap` `profile=micro` | `wick_act` |
 | **Grok** (function calling) | Same as ChatGPT: `tools[]` + JSON-lines RPC | `wick_snap` | `wick_act` |
-| **Any CLI agent** | `bin/wick` | `wick snap URL --profile micro` | `wick act …` |
+| **Any CLI agent** | `wick` / `wick commands` / `wick call` — full surface, no socket | `wick snap URL --profile micro` | `wick act …` |
 
 Hermes already ships its own browser tools (`browser_navigate`, `browser_snapshot` with `@e1` refs, `browser_click`). Use those when you are already in a Chromium session. Use **Wick** when you want:
 

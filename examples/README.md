@@ -14,7 +14,7 @@ A playbook is a JSON list of steps. Known actions run; **unknown actions are sof
 - `playbook.json` — minimal light + Chromium mix: `open`, `links`, `goto`, tabs, PDF.
 - `agent-loop.json` — the same shape with inline notes describing the snap → plan → ask → act flow.
 - `hermes.yaml` — Hermes Agent MCP snippet (`wick mcp`, `WICK_PROFILE=safe-act`). Copy under `mcp_servers` in `~/.hermes/config.yaml`. See [docs/HERMES.md](../docs/HERMES.md).
-- `rpc-loop.jsonl` — ChatGPT/Grok JSON-lines RPC: `snap` → `plan` → `ask` → `act` (feed each line to `wick rpc stdio`). Use `elements[].hint` from snap, not a memorized name — live example.com currently exposes `Learn more`.
+- `rpc-loop.jsonl` — ChatGPT/Grok JSON-lines RPC: `snap` → `plan` → `ask` → `act` (feed each line to `wick rpc stdio`). Shell-only agents can run the same steps as `wick snap` / `wick call snap '{…}'` instead. Use `elements[].hint` from snap, not a memorized name — live example.com currently exposes `Learn more`.
 
 ## The plan-ask flow
 

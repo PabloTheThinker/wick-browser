@@ -5,10 +5,11 @@ description: Use when an agent must browse, observe, click, fill, search, or log
 
 # Wick
 
-Standalone Chromium browser for agents. One JSON surface. Load `wick skill` (or MCP `skill`) at session start.
+Standalone Chromium browser for agents. **The CLI is the full surface** — you do not need MCP or RPC. Every command prints one JSON object. Load `wick skill` or `wick commands` at session start.
 
 ## Loop
 
+0. `wick commands` (or just `wick`) — catalog + example argv. Same args via `wick call snap '{"url":"…","fast":true}'`.
 1. `wick snap URL --fast` — first look (`kind`, excerpt, headings, hints). After you are on a page, omit the URL.
 2. `wick read` — structured body when the excerpt is not enough. Add `--q terms` or `--section Heading` to keep only the relevant prose. Prefer this over `open`.
 3. `wick plan` / `wick ask --q terms` — suggestions, or filter links/headings/paragraphs. Same ~8s observe cache.

@@ -17,6 +17,8 @@ Agent
 Primary situation report. Prefer this over dumping full markdown every turn.
 
 ```bash
+wick commands                                     # CLI catalog (or just: wick)
+wick call snap '{"url":"https://example.com/","fast":true}'
 wick skill                                        # purpose, loop, rules
 wick snap https://example.com/ --profile micro    # tree only (Hermes first look)
 wick snap https://example.com/ --fast             # excerpt + elements
