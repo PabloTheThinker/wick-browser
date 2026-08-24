@@ -107,7 +107,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_snap_many",
-        "Parallel observe of many URLs (bounded concurrency). Prefer profile=micro.",
+        "Observe many URLs (serialized on standalone Chromium). Prefer profile=micro.",
         {
             "type": "object",
             "properties": {

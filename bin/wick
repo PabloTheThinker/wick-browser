@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Wick — free agent browser for AI agents and automation.
+"""Wick — standalone agent browser (Chromium).
 
-A thin flame for machines. MIT orchestration layer.
-Optional engines: Lightpanda binary (AGPL, external) · Chromium headless-shell.
+MIT orchestration + Playwright Chromium. One JSON surface.
+Lightpanda is opt-in only (WICK_ENGINE=lightpanda).
 
 No paid API. CDP loopback only.
 """
@@ -110,7 +110,8 @@ MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 CHROME_PORT = int(os.environ.get("WICK_CHROME_PORT", "9222"))
 LP_PORT = int(os.environ.get("WICK_LP_PORT", "9333"))
-DEFAULT_ENGINE = os.environ.get("WICK_ENGINE", "auto")  # auto|lightpanda|chromium
+# Standalone Wick is Chromium. Lightpanda is opt-in only (WICK_ENGINE=lightpanda).
+DEFAULT_ENGINE = os.environ.get("WICK_ENGINE", "chromium")  # chromium|lightpanda|auto
 
 
 def find_lightpanda() -> Path | None:
@@ -189,11 +190,21 @@ def chrome_up() -> bool:
     return cdp_version(CHROME_PORT) is not None
 
 
+def current_engine_pref() -> str:
+    return (os.environ.get("WICK_ENGINE") or "chromium").strip().lower() or "chromium"
+
+
 def resolve_engine(requested: str | None) -> str:
-    eng = requested or DEFAULT_ENGINE
+    """Wick standalone = Chromium. `auto` no longer prefers Lightpanda."""
+    eng = (requested or current_engine_pref() or "chromium").strip().lower()
     if eng == "auto":
-        return "lightpanda" if find_lightpanda() else "chromium"
+        return "chromium"
     return eng
+
+
+def observe_uses_lightpanda() -> bool:
+    """True only when the operator explicitly asked for Lightpanda and it exists."""
+    return resolve_engine(None) == "lightpanda" and find_lightpanda() is not None
 
 
 def disk_usage(path: Path) -> str:
@@ -454,16 +465,12 @@ def chrome_observe_fetch(
     max_chars: int = 12000,
     wait_ms: int = 2000,
 ) -> dict:
-    """Observe via Chromium when Lightpanda is not installed.
-
-    Agents still get title / excerpt / links / role= hints. Heavier than
-    Lightpanda — only used as a fallback.
-    """
+    """Standalone observe: Chromium extracts title, excerpt, links, role= hints."""
     if not VENV_PY.exists():
         return {
             "ok": False,
             "product": "wick",
-            "error": "lightpanda_not_found",
+            "error": "chromium_venv_missing",
             "hint": "wick install-engine, or python3 -m venv .venv && .venv/bin/playwright install chromium",
         }
     if not chrome_up():
@@ -513,7 +520,6 @@ def chrome_observe_fetch(
         return {"ok": False, "product": "wick", "error": "bad_observe_json"}
     out.setdefault("product", "wick")
     out.setdefault("engine", "chromium")
-    out.setdefault("fallback", "no_lightpanda")
     out.setdefault("ms", int((time.time() - t0) * 1000))
     if proc.returncode != 0 and out.get("ok") is not False:
         out["ok"] = False
@@ -571,20 +577,35 @@ def lp_fetch(
             if herr:
                 return herr
 
-    lp_bin = find_lightpanda()
-    if not lp_bin:
+    wait = 2000 if wait_ms is None else wait_ms
+    if not observe_uses_lightpanda():
         if len(urls) == 1:
             return chrome_observe_fetch(
                 urls[0],
                 dump=dump,
                 max_chars=max_chars,
-                wait_ms=2000 if wait_ms is None else wait_ms,
+                wait_ms=wait,
             )
+        results = [
+            chrome_observe_fetch(u, dump=dump, max_chars=max_chars, wait_ms=wait)
+            for u in urls
+        ]
+        return {
+            "ok": all(bool(r.get("ok")) for r in results),
+            "product": "wick",
+            "engine": "chromium",
+            "batch": True,
+            "count": len(results),
+            "results": results,
+        }
+
+    lp_bin = find_lightpanda()
+    if not lp_bin:
         return {
             "ok": False,
             "product": "wick",
             "error": "lightpanda_not_found",
-            "hint": "wick install-engine, or snap one URL at a time (Chromium observe fallback)",
+            "hint": "Wick standalone uses Chromium. Unset WICK_ENGINE=lightpanda, or install a Lightpanda binary.",
         }
 
     ensure()
@@ -767,58 +788,44 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     print(f"home: {HOME} mode={home_mode}")
     print(f"disk: {disk_usage(HOME)}")
     print(f"root: {ROOT}")
-    print(f"lightpanda: {lp_bin}")
+    print(f"engine: chromium (standalone)")
+    print(f"venv: {VENV_PY.exists()}")
+    print(f"chrome_cdp:{CHROME_PORT} up={chrome_up()}")
+    print(f"default_engine: {resolve_engine(None)}")
+    print(f"lightpanda: {lp_bin or 'unused'} (opt-in only: WICK_ENGINE=lightpanda)")
     print(
         "lightpanda_symlink: "
         f"path={sym.get('path')} is_symlink={sym.get('is_symlink')} "
         f"target={sym.get('target')} resolves={sym.get('resolves')}"
     )
-    print(f"venv: {VENV_PY.exists()}")
     print(f"lp_cdp:{LP_PORT} up={lp_up()}")
-    print(f"chrome_cdp:{CHROME_PORT} up={chrome_up()}")
-    print(f"default_engine: {resolve_engine(None)}")
-    print("license_layer: MIT (orchestration layer) · optional Lightpanda binary is AGPL third-party")
+    print("license_layer: MIT (orchestration + Chromium via Playwright)")
     print("paid: no")
     return 0
 
 
 def cmd_ensure(_: argparse.Namespace) -> int:
-    """Start Lightpanda if binary exists; no-op if already up. Never starts Chromium."""
+    """Start standalone Chromium if it is not already up."""
     ensure()
-    lp_bin = find_lightpanda()
-    if not lp_bin:
+    if chrome_up():
+        v = cdp_version(CHROME_PORT) or {}
         print(
             json.dumps(
                 {
                     "ok": True,
                     "product": "wick",
                     "action": "noop",
-                    "lightpanda": "absent",
-                    "chromium": "not_started",
-                    "hint": "wick install-engine to enable light engine",
-                }
-            )
-        )
-        return 0
-    if lp_up():
-        v = cdp_version(LP_PORT) or {}
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "product": "wick",
-                    "action": "noop",
-                    "lightpanda": "up",
-                    "cdp": f"http://127.0.0.1:{LP_PORT}",
+                    "engine": "chromium",
+                    "chromium": "up",
+                    "cdp": f"http://127.0.0.1:{CHROME_PORT}",
                     "browser": v.get("Browser"),
-                    "chromium": "not_started",
                 }
             )
         )
         return 0
-    r = start_lp()
+    r = start_chrome()
     r["action"] = "started" if r.get("ok") and not r.get("already") else ("noop" if r.get("already") else "failed")
-    r["chromium"] = "not_started"
+    r["engine"] = "chromium"
     print(json.dumps(r))
     return 0 if r.get("ok") else 1
 
@@ -910,54 +917,49 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
-    lp_bin = find_lightpanda()
-    if lp_bin:
-        _kw = dict(
-            dump=args.dump,
-            max_chars=args.max,
-            wait_until=getattr(args, "wait_until", "load") or "load",
-            wait_ms=getattr(args, "wait_ms", 1500),
-            wait_selector=getattr(args, "wait_selector", None),
-            strip=[] if getattr(args, "no_strip", False) else _observe_strip(no_strip=False),
-        )
-        if getattr(args, "fast", False):
-            _kw["wait_until"] = "domcontentloaded"
-            _kw["wait_ms"] = min(int(_kw["wait_ms"] or 1500), 1200)
-        r = lp_fetch(args.url, **_kw)
-        if r.get("ok") and getattr(args, "stats", False) and wick_stats is not None:
-            def _build(cmd):
-                if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
-                    wick_shields.append_lp_shield_args(
-                        cmd, shields=True,
-                        session=os.environ.get("WICK_SESSION", "default"),
-                        block_private=False,
-                    )
-                    wick_shields.append_privacy_headers(cmd)
-            try:
-                lp_bin = find_lightpanda()
-                r["stats"] = wick_stats.metrics_pass(
-                    lp_bin, args.url,
-                    build_shield_cmd=_build,
-                    wait_ms=int(_kw["wait_ms"] or 1500),
-                    wait_until=_kw["wait_until"] or "load",
+    _kw = dict(
+        dump=args.dump,
+        max_chars=args.max,
+        wait_until=getattr(args, "wait_until", "load") or "load",
+        wait_ms=getattr(args, "wait_ms", 1500),
+        wait_selector=getattr(args, "wait_selector", None),
+        strip=[] if getattr(args, "no_strip", False) else _observe_strip(no_strip=False),
+    )
+    if getattr(args, "fast", False):
+        _kw["wait_until"] = "domcontentloaded"
+        _kw["wait_ms"] = min(int(_kw["wait_ms"] or 1500), 1200)
+    r = lp_fetch(args.url, **_kw)
+    if (
+        r.get("ok")
+        and getattr(args, "stats", False)
+        and wick_stats is not None
+        and observe_uses_lightpanda()
+    ):
+        def _build(cmd):
+            if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
+                wick_shields.append_lp_shield_args(
+                    cmd, shields=True,
+                    session=os.environ.get("WICK_SESSION", "default"),
+                    block_private=False,
                 )
-            except Exception as e:
-                r["stats_error"] = str(e)[:160]
-        if r.get("ok") and getattr(args, "save_session", False) and wick_shields is not None:
-            try:
-                r["session_saved"] = wick_shields.promote_jar_to_load(
-                    os.environ.get("WICK_SESSION", "default")
-                )
-            except Exception as e:
-                r["session_saved"] = {"ok": False, "error": str(e)[:120]}
-    else:
-        if run_pw("action_goto.py", args.url) != 0:
-            return 1
-        env = os.environ.copy()
-        env["WICK_CHROME_PORT"] = str(CHROME_PORT)
-        out = subprocess.check_output([str(VENV_PY), str(ROOT / "lib" / "action_text.py"), str(args.max)], env=env)
-        r = json.loads(out.decode())
-        r["engine"] = "chromium"
+                wick_shields.append_privacy_headers(cmd)
+        try:
+            lp_bin = find_lightpanda()
+            r["stats"] = wick_stats.metrics_pass(
+                lp_bin, args.url,
+                build_shield_cmd=_build,
+                wait_ms=int(_kw["wait_ms"] or 1500),
+                wait_until=_kw["wait_until"] or "load",
+            )
+        except Exception as e:
+            r["stats_error"] = str(e)[:160]
+    if r.get("ok") and getattr(args, "save_session", False) and wick_shields is not None:
+        try:
+            r["session_saved"] = wick_shields.promote_jar_to_load(
+                os.environ.get("WICK_SESSION", "default")
+            )
+        except Exception as e:
+            r["session_saved"] = {"ok": False, "error": str(e)[:120]}
     r["product"] = "wick"
     if not r.get("ok") and "error" in r:
         print(json.dumps(r, ensure_ascii=False))
@@ -2141,7 +2143,6 @@ def _gather_snap_chromium(
         "tree_chars": None,
         "fast": False,
         "engine": obs.get("engine") or "chromium",
-        "fallback": obs.get("fallback") or "no_lightpanda",
         "profile": prof,
         "timing": {
             "total_ms": int((time.time() - t0) * 1000),
@@ -2221,7 +2222,7 @@ def _gather_snap(
             return hit
 
     t0 = time.time()
-    if find_lightpanda() is None:
+    if not observe_uses_lightpanda():
         return _gather_snap_chromium(
             url,
             max_chars=md_max,
@@ -2442,6 +2443,9 @@ def snap_many_payload(
     if not cleaned:
         return {"ok": False, "product": "wick", "error": "no_url"}
     conc = max(1, min(int(concurrency or 4), 8))
+    # One Chromium page — parallel snaps race the shared daemon.
+    if not observe_uses_lightpanda():
+        conc = 1
     from concurrent.futures import ThreadPoolExecutor
 
     results: list[dict] = [{} for _ in cleaned]
@@ -3114,30 +3118,47 @@ def cmd_prune(_: argparse.Namespace) -> int:
 
 
 def cmd_install_engine(_: argparse.Namespace) -> int:
-    """Download free Lightpanda nightly into engines/ (optional backend)."""
+    """Install Playwright Chromium — the standalone Wick engine."""
     ensure()
-    dest = ENGINES / "lightpanda"
-    url = "https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux"
-    print(json.dumps({"ok": True, "product": "wick", "downloading": url, "dest": str(dest)}))
+    pw = ROOT / ".venv" / "bin" / "playwright"
+    py = VENV_PY if VENV_PY.exists() else Path(sys.executable)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "product": "wick",
+                "engine": "chromium",
+                "installing": "playwright chromium",
+            }
+        )
+    )
     try:
-        subprocess.check_call(["curl", "-fsSL", "-o", str(dest), url])
-        dest.chmod(0o755)
-        link = ROOT / "bin" / "lightpanda"
-        if not link.exists():
-            link.symlink_to(dest)
+        if pw.is_file():
+            subprocess.check_call([str(pw), "install", "chromium"])
+        else:
+            subprocess.check_call([str(py), "-m", "playwright", "install", "chromium"])
         print(
             json.dumps(
                 {
                     "ok": True,
                     "product": "wick",
-                    "path": str(dest),
-                    "version": subprocess.check_output([str(dest), "version"], text=True).strip(),
+                    "engine": "chromium",
+                    "hint": "wick ensure   # start Chromium CDP",
                 }
             )
         )
         return 0
     except Exception as e:
-        print(json.dumps({"ok": False, "product": "wick", "error": str(e)}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "product": "wick",
+                    "error": str(e),
+                    "hint": "python3 -m venv .venv && .venv/bin/pip install playwright && wick install-engine",
+                }
+            )
+        )
         return 1
 
 
@@ -3169,7 +3190,7 @@ def main() -> int:
 
     sub.add_parser("version", help="Print wick version and engine status")
     sub.add_parser("doctor")
-    sub.add_parser("ensure", help="Start Lightpanda if present; never starts Chromium")
+    sub.add_parser("ensure", help="Start standalone Chromium if it is not already up")
 
     p = sub.add_parser("start")
     p.add_argument("--engine", choices=["auto", "lightpanda", "chromium", "both"])
@@ -3497,7 +3518,7 @@ def main() -> int:
     _add_json_only(p)
 
     sub.add_parser("prune")
-    sub.add_parser("install-engine", help="Download free Lightpanda nightly (optional backend)")
+    sub.add_parser("install-engine", help="Install Playwright Chromium (standalone engine)")
 
     args = ap.parse_args()
     if wick_capability is not None:

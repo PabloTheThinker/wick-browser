@@ -38,16 +38,11 @@ Passkeys: vault-stored resident keys, PKCS#8 wrapped with a dedicated AES-256-GC
 
 ## Fetch / navigation guards (0.9)
 
-Lightpanda `fetch` and Chromium `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost). Override only with `WICK_ALLOW_PRIVATE=1`.
+Chromium observe and `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost). Override only with `WICK_ALLOW_PRIVATE=1`.
 
 ## Loopback CDP
 
-Lightpanda and Chromium expose Chrome DevTools Protocol on **127.0.0.1 only** by default:
-
-| Engine | Env | Default |
-|--------|-----|---------|
-| Lightpanda | `WICK_LP_PORT` | `9333` |
-| Chromium | `WICK_CHROME_PORT` | `9222` |
+Chromium exposes Chrome DevTools Protocol on **127.0.0.1 only** by default (`WICK_CHROME_PORT`, `9222`). An opt-in Lightpanda binary would use `WICK_LP_PORT` (`9333`).
 
 Do not WAN-bind these ports. Anyone who can reach CDP can drive the browser as you.
 
@@ -57,7 +52,7 @@ Wick provides **network-layer** privacy inspired by Brave:
 
 - EasyList / EasyPrivacy / Fanboy list blocking (when installed)
 - Custom tracker URL blocks
-- Private-network / SSRF blocking on the Lightpanda fetch path
+- Private-network / SSRF blocking on observe and Chromium goto/login
 - Optional DNT / Sec-GPC headers
 - Per-session cookie jars and Chromium profiles
 - `wick session export` redacts cookie values by default (`--reveal` is full-act only; redacted exports are not importable)

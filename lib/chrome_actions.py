@@ -1014,7 +1014,6 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             "links": links[:25],
             "elements": elements,
             "engine": "chromium",
-            "fallback": "no_lightpanda",
         }
 
     elif action == "content":

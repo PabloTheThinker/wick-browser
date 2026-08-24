@@ -1,25 +1,14 @@
 # Wick as an agent browser
 
-Wick 0.9 is built so agents can **observe → plan → ask → act** (and **login**) without a human GUI in the loop. One JSON surface. Two engines. No drama.
-
-## Wick brothers
-
-Think of Wick as two specialists that share a mission:
-
-| Brother | Engine | Job |
-|---------|--------|-----|
-| **Light recon** | Lightpanda (default) | Fast fetch, markdown, semantic tree, `snap` / `plan` / `ask` / `elements`, shields |
-| **Heavy contact** | Chromium (Playwright) | Clicks, fills, tabs, PDF, screenshots, downloads |
-
-Recon stays cheap (~tens of MB). Contact lights only when the page must move. Agents should prefer recon until a `hint` or form forces Chromium.
+Wick 0.9 is a **standalone Chromium browser for agents**. Observe and act share one engine and one JSON surface. Lightpanda is not required.
 
 ```
 Agent
   │
-  ├─ observe  → snap / elements / open / tree   (light recon)
+  ├─ observe  → snap / elements / open / tree
   ├─ plan     → wick plan   (suggested next actions)
   ├─ ask      → wick ask    (filter targets by query, no LLM)
-  ├─ act      → wick act …                      (heavy contact)
+  ├─ act      → wick act …  (click / fill / login / cu)
   └─ batch    → wick run playbook.json
 ```
 
@@ -29,7 +18,7 @@ Primary situation report. Prefer this over dumping full markdown every turn.
 
 ```bash
 wick snap https://example.com/ --profile micro    # tree only (Hermes first look)
-wick snap https://example.com/ --fast             # tree + markdown in parallel
+wick snap https://example.com/ --fast             # excerpt + elements
 ```
 
 Returns one JSON object with:
@@ -38,7 +27,7 @@ Returns one JSON object with:
 - `elements[]` — interactive targets with `hint` selectors
 - `http_ok`, `timing` (`total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`)
 
-`--profile micro|default|full` sets wait + field budgets. `micro` skips the markdown fetch. `WICK_SNAP_PROFILE` applies when `--profile` is omitted. `wick snap-many URL URL…` observes several pages with bounded concurrency (default `micro`).
+`--profile micro|default|full` sets wait + field budgets. `WICK_SNAP_PROFILE` applies when `--profile` is omitted. `wick snap-many URL URL…` observes several pages on the shared Chromium (serialized so snaps do not race).
 
 Example element:
 

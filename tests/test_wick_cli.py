@@ -29,7 +29,8 @@ def test_lp_fetch_rejects_blank_url():
     assert result["product"] == "wick"
 
 
-def test_lp_fetch_reports_missing_lightpanda(monkeypatch):
+def test_lp_fetch_uses_chromium_when_engine_missing(monkeypatch):
+    monkeypatch.delenv("WICK_ENGINE", raising=False)
     monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
 
     def no_chrome(*_a, **_k):
@@ -43,7 +44,7 @@ def test_lp_fetch_reports_missing_lightpanda(monkeypatch):
     monkeypatch.setattr(wick, "chrome_observe_fetch", no_chrome)
     result = wick.lp_fetch("https://example.com/")
     assert result["ok"] is False
-    assert result["error"] in ("lightpanda_not_found", "observe_engine_missing")
+    assert result["error"] == "observe_engine_missing"
     assert result["product"] == "wick"
 
 
@@ -88,6 +89,7 @@ def test_gather_snap_micro_skips_markdown(monkeypatch):
             "http_status": 200,
         }
 
+    monkeypatch.setenv("WICK_ENGINE", "lightpanda")
     monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
     monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
     monkeypatch.setattr(wick, "wick_observe_cache", None)
@@ -117,6 +119,7 @@ def test_gather_snap_default_fetches_tree_and_markdown(monkeypatch):
             "http_status": 200,
         }
 
+    monkeypatch.setenv("WICK_ENGINE", "lightpanda")
     monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
     monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
     monkeypatch.setattr(wick, "wick_observe_cache", None)
@@ -134,6 +137,7 @@ def test_snap_many_payload_bounded(monkeypatch):
         "snap_payload",
         lambda u, **_kw: {"ok": True, "url": u, "title": "Example Domain"},
     )
+    monkeypatch.delenv("WICK_ENGINE", raising=False)
     out = wick.snap_many_payload(
         ["https://example.com/", "https://example.com/about"],
         profile="micro",
@@ -141,7 +145,7 @@ def test_snap_many_payload_bounded(monkeypatch):
     )
     assert out["ok"] is True
     assert out["count"] == 2
-    assert out["concurrency"] == 2
+    assert out["concurrency"] == 1  # Chromium standalone serializes snap-many
     assert out["mode"] == "agent_snap_many"
 
 
@@ -173,18 +177,19 @@ def test_gather_snap_chromium_fallback_is_single_observe(monkeypatch):
             "http_ok": True,
             "http_status": 200,
             "engine": "chromium",
-            "fallback": "no_lightpanda",
             "ms": 20,
             "chars": 80,
         }
 
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
+    monkeypatch.delenv("WICK_ENGINE", raising=False)
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
     monkeypatch.setattr(wick, "chrome_observe_fetch", fake_observe)
     monkeypatch.setattr(wick, "wick_observe_cache", None)
     out = wick._gather_snap("https://www.amazon.com/s?k=usb-c+cable")
     assert calls == ["markdown"]
     assert out["ok"] is True
     assert out["engine"] == "chromium"
+    assert out.get("fallback") in (None, "")
     assert out["timing"]["parallel"] is False
     assert out["link_count"] >= 1
     assert "Anker" in (out.get("excerpt") or "")
@@ -223,8 +228,9 @@ def test_chrome_launch_mode_headed_flag(monkeypatch):
     assert wick.chrome_launch_mode(headed=True) == ("0", "0")
 
 
-def test_lp_fetch_falls_back_to_chromium_observe(monkeypatch):
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
+def test_lp_fetch_uses_chromium_even_if_lightpanda_binary_exists(monkeypatch):
+    monkeypatch.delenv("WICK_ENGINE", raising=False)
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
 
     def fake_observe(url, dump="markdown", max_chars=12000, wait_ms=2000):
         return {
@@ -235,7 +241,6 @@ def test_lp_fetch_falls_back_to_chromium_observe(monkeypatch):
             "http_ok": True,
             "http_status": 200,
             "engine": "chromium",
-            "fallback": "no_lightpanda",
             "ms": 12,
             "chars": 40,
         }
@@ -244,8 +249,18 @@ def test_lp_fetch_falls_back_to_chromium_observe(monkeypatch):
     out = wick.lp_fetch("https://example.com/", dump="markdown")
     assert out["ok"] is True
     assert out["engine"] == "chromium"
-    assert out["fallback"] == "no_lightpanda"
+    assert "fallback" not in out or not out.get("fallback")
     assert "Example Domain" in (out.get("content") or "")
+
+
+def test_resolve_engine_is_chromium_by_default(monkeypatch):
+    monkeypatch.delenv("WICK_ENGINE", raising=False)
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
+    assert wick.resolve_engine(None) == "chromium"
+    assert wick.resolve_engine("auto") == "chromium"
+    assert wick.observe_uses_lightpanda() is False
+    monkeypatch.setenv("WICK_ENGINE", "lightpanda")
+    assert wick.observe_uses_lightpanda() is True
 
 
 def test_rpc_challenge_handler(monkeypatch):

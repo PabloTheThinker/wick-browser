@@ -1,6 +1,6 @@
 # Using Wick from Hermes, Claude, ChatGPT, and Grok
 
-Wick is a **browser for agents**. Observe is cheap (Lightpanda). Clicking is expensive (Chromium). Every command prints one JSON object.
+Wick is a **standalone Chromium browser for agents**. Observe and click share one engine. Every command prints one JSON object.
 
 This page is the harness map. Examples stay on `https://example.com/` only.
 
@@ -16,7 +16,7 @@ This page is the harness map. Examples stay on `https://example.com/` only.
 
 Hermes already ships its own browser tools (`browser_navigate`, `browser_snapshot` with `@e1` refs, `browser_click`). Use those when you are already in a Chromium session. Use **Wick** when you want:
 
-1. A cheaper first look (tree-only `micro` snap, no second markdown fetch)
+1. A cheap first look (`micro` snap: title + elements, no full markdown)
 2. Origin-bound vault login (secrets never enter the model context)
 3. Capability lock (`WICK_PROFILE=safe-act`) so a planner cannot `fill` / `eval`
 4. Computer-use (`cu` / `click_n`) only after `role=` hints fail
@@ -52,7 +52,7 @@ For a login job, start a **separate** Hermes turn (or raise the process to `full
 
 ### Loop Hermes should follow
 
-1. **`snap`** `{url, profile: "micro"}` — title, interactive elements, `role=` hints. One Lightpanda tree fetch. No markdown.
+1. **`snap`** `{url, profile: "micro"}` — title, interactive elements, `role=` hints. Cheap Chromium observe.
 2. If the excerpt is not enough, **`ask`** `{url, q: "terms"}` or **`plan`** `{url}` (same observe cache, ~8s TTL).
 3. Need the long read? **`open`** `{url, fast: true}`.
 4. Must click? **`act`** `{action: "click", rest: ["role=link[name=\"More information\"]"]}`.

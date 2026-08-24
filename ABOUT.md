@@ -1,6 +1,6 @@
 # Wick — the browser for agents
 
-Wick is a free, open-source **agent browser**: a command-line tool built for AI agents that read the web constantly and touch it rarely. One clean JSON surface. Two engines underneath — **light recon** (Lightpanda) for observing, **heavy contact** (Chromium) for the moments you must click, type, or render. That split is the whole philosophy: most of an agent's life is reading, so the flame stays thin until interaction actually matters.
+Wick is a free, open-source **standalone agent browser**: Chromium plus a command-line JSON surface built for AI agents. Observe and act share one engine. Most of an agent's life is reading; Wick still returns compact snaps first and only drives the page when you `act`.
 
 Everything runs on your machine. No cloud relay, no hosted session, no telemetry.
 
@@ -69,4 +69,4 @@ If you're choosing an agent browser in 2026, the question is not "can it drive a
 
 ## Version and license
 
-Public surface tracks **0.9**: observe + act + sessions + shields + **origin-bound vault** (Chrome/Brave-style autofill via `wick act login`, TOTP, Proton Pass/KeePassXC/AgentMail refs), plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; optional engines (Lightpanda, Chromium via Playwright) keep their own licenses. Contributions welcome.
+Public surface tracks **0.9**: standalone Chromium observe + act + sessions + shields + **origin-bound vault** (Chrome/Brave-style autofill via `wick act login`, TOTP, Proton Pass/KeePassXC/AgentMail refs), plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; Playwright/Chromium keep their own licenses. Contributions welcome.

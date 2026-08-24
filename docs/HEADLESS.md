@@ -1,4 +1,6 @@
-# How headless works here (Wick × Lightpanda study)
+# How headless works here
+
+Wick's **standalone engine is Chromium** (Playwright). The Lightpanda notes below are historical / opt-in (`WICK_ENGINE=lightpanda`) only.
 
 ## What “headless” means
 
