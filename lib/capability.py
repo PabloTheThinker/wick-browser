@@ -78,6 +78,7 @@ _OBSERVE_CMDS = frozenset(
         "batch",
         "metrics",
         "probe",
+        "challenge",
         "snap",
         "observe",
         "elements",

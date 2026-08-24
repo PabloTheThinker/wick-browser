@@ -242,6 +242,18 @@ class TestChromeFixture(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_late_iframe_widget_is_detected(self):
+        import challenge
+
+        url = f"http://127.0.0.1:{self.port}/challenge-late.html"
+        gone = self._run("goto", url)
+        self.assertTrue(gone.get("ok"), gone)
+        self.page.wait_for_selector("iframe#late", timeout=2000)
+        hit = challenge.page_challenge(self.page)
+        self.assertTrue(hit["found"], hit)
+        self.assertEqual(hit["kind"], "turnstile")
+        self.assertFalse(hit["solves"])
+
     def test_login_after_challenge_waits_then_fills(self):
         import vault
 

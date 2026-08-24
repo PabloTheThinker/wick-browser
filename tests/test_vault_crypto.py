@@ -338,7 +338,7 @@ def test_relock_after_fill_clears_grants(vault, monkeypatch):
 def test_broker_verbs_need_full_act(monkeypatch):
     capability = _load_lib("capability")
     monkeypatch.setenv("WICK_PROFILE", "observe-only")
-    for action in ("lock", "unlock", "grant", "passkey-new", "backup", "restore"):
+    for action in ("lock", "unlock", "grant", "passkey-new", "backup", "restore", "harden"):
         denied = capability.deny("vault", vault_action=action)
         assert denied is not None
         assert denied["error"] == "capability_denied"
@@ -346,7 +346,7 @@ def test_broker_verbs_need_full_act(monkeypatch):
         assert capability.deny("vault", vault_action=action) is None
 
     monkeypatch.setenv("WICK_PROFILE", "full-act")
-    for action in ("lock", "unlock", "grant", "passkey-new", "backup", "restore"):
+    for action in ("lock", "unlock", "grant", "passkey-new", "backup", "restore", "harden"):
         assert capability.deny("vault", vault_action=action) is None
 
 
@@ -356,7 +356,7 @@ def test_tools_schema_exposes_broker_actions():
         t for t in tools_schema.tools_export("0.9.0")["tools"] if t["function"]["name"] == "wick_vault"
     )
     actions = tool["function"]["parameters"]["properties"]["action"]["enum"]
-    for action in ("lock", "unlock", "grant", "passkey-new", "audit", "backup", "restore"):
+    for action in ("lock", "unlock", "grant", "passkey-new", "audit", "backup", "restore", "harden"):
         assert action in actions
     assert "ttl" in tool["function"]["parameters"]["properties"]
     assert "dest" in tool["function"]["parameters"]["properties"]

@@ -84,6 +84,10 @@ try:
     import policy as wick_policy
 except Exception:
     wick_policy = None  # type: ignore
+try:
+    import challenge as wick_challenge
+except Exception:
+    wick_challenge = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -916,6 +920,16 @@ def cmd_metrics(_: argparse.Namespace) -> int:
 
 
 
+def cmd_challenge(args: argparse.Namespace) -> int:
+    """Observe-only human-challenge detect. Never logs in. Never solves."""
+    if wick_challenge is None:
+        print(json.dumps({"ok": False, "error": "challenge_module_missing", "login": False, "solves": False}))
+        return 1
+    out = wick_challenge.probe(getattr(args, "url", "") or "")
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
+
+
 def cmd_probe(args: argparse.Namespace) -> int:
     """Cross-exam style compact brief for agents (status + title + links + excerpt)."""
     r = lp_fetch(
@@ -1417,6 +1431,10 @@ def cmd_vault(args: argparse.Namespace) -> int:
         out = wick_vault.backup(dest)
         print(json.dumps(out, ensure_ascii=False))
         return 0 if out.get("ok") else 1
+    if act == "harden":
+        out = wick_vault.harden()
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     if act == "restore":
         src = getattr(args, "src", None) or getattr(args, "name", None) or ""
         if not src:
@@ -1430,7 +1448,7 @@ def cmd_vault(args: argparse.Namespace) -> int:
                 )
             )
             return 2
-        out = wick_vault.restore(src)
+        out = wick_vault.restore(src, force=bool(getattr(args, "force", False)))
         print(json.dumps(out, ensure_ascii=False))
         return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown_vault_action:{act}"}))
@@ -2640,7 +2658,9 @@ def _rpc_handlers() -> dict:
                   "error": "missing_src",
                   "hint": "Set src/path and WICK_VAULT_BACKUP_PASSPHRASE. Not live sync.",
               }
-          return wick_vault.restore(src)
+          return wick_vault.restore(src, force=bool(args.get("force")))
+      if act == "harden":
+          return wick_vault.harden()
       return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
 
   def _session(args: dict) -> dict:
@@ -3009,13 +3029,14 @@ def main() -> int:
             "status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen",
             "resolve", "suggest", "autofill", "lock", "unlock", "grant",
             "passkey-new", "passkey_new",
-            "audit", "backup", "restore",
+            "audit", "backup", "restore", "harden",
         ],
     )
     p.add_argument("name", nargs="?", help="entry name (set/get/rm) or backup/restore path")
     p.add_argument("--dest", help="destination path for vault backup")
     p.add_argument("--src", help="source path for vault restore")
     p.add_argument("--limit", type=int, default=50, help="audit tail length (default 50)")
+    p.add_argument("--force", action="store_true", help="with restore: overwrite an existing store")
     p.add_argument("--password", help="password value for set (prefer env WICK_VAULT_SET_PASSWORD)")
     p.add_argument("--username")
     p.add_argument("--url", help="associated URL (set/match)")
@@ -3139,6 +3160,13 @@ def main() -> int:
     _add_observe_profile(p)
     _add_json_only(p)
 
+    p = sub.add_parser(
+        "challenge",
+        help="Observe-only: detect a human challenge on a URL (never login, never solve)",
+    )
+    p.add_argument("url")
+    _add_json_only(p)
+
     p = sub.add_parser("probe", help="Compact agent brief: status, title, links, excerpt")
     p.add_argument("url")
     p.add_argument("--max", type=int, default=20000)
@@ -3241,6 +3269,7 @@ def main() -> int:
         "act": cmd_act,
         "run": cmd_run,
         "probe": cmd_probe,
+        "challenge": cmd_challenge,
         "snap": cmd_snap,
         "observe": cmd_snap,
         "snap-many": cmd_snap_many,

@@ -245,8 +245,9 @@ WICK_TOOLS: list[dict[str, Any]] = [
                         "audit",
                         "backup",
                         "restore",
+                        "harden",
                     ],
-                    "description": "Metadata actions only; never request reveal. unlock/lock/grant/backup/restore need WICK_PROFILE=full-act. audit is observe-safe (no secrets). backup/restore are file copies, not live sync.",
+                    "description": "Metadata actions only; never request reveal. unlock/lock/grant/backup/restore/harden need WICK_PROFILE=full-act. audit is observe-safe (no secrets). backup/restore are file copies, not live sync. harden converts filekey→passphrase and deletes master.key.",
                 },
                 "name": {
                     "type": "string",

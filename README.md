@@ -86,6 +86,8 @@ wick vault set mysite --username me --password '…' --url https://example.com/l
 wick vault suggest --url https://example.com/login
 wick act login https://example.com/login
 wick act login https://example.com/login --after-challenge 15000   # wait until widget gone, then fill
+wick challenge https://github.com/login                            # observe-only detect; never login
+WICK_VAULT_PASSPHRASE='…' wick vault harden                        # delete standing master.key
 WICK_VAULT_BACKUP_PASSPHRASE='…' wick vault backup /tmp/wick-vault.bak
 wick vault audit
 # or: wick act fill 'css=input[type=password]' 'vault://mysite/password'

@@ -47,6 +47,7 @@ class TestProfiles(EnvCase):
         self.assertEqual(blocked["error"], "capability_denied")
         self.assertEqual(blocked["profile"], "observe-only")
         self.assertIsNotNone(capability.deny("act", action="login"))
+        self.assertIsNone(capability.deny("challenge"))
         self.assertIsNone(capability.deny("vault", vault_action="suggest"))
         self.assertIsNone(capability.deny("vault", vault_action="audit"))
         self.assertIsNotNone(capability.deny("vault", vault_action="set"))

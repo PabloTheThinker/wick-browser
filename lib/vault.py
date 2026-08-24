@@ -583,12 +583,12 @@ def _read_store_legacy(raw: str) -> dict[str, Any]:
     return obj
 
 
-def _write_store(entries: dict[str, Any]) -> None:
+def _write_store(entries: dict[str, Any], *, rekey: bool = False) -> None:
     """Always writes wickvault2. Reuses the existing vault key when openable."""
     crypto = _require_crypto()
     header: dict[str, Any] | None = None
     vault_key: bytes | None = None
-    doc = _read_doc()
+    doc = None if rekey else _read_doc()
     if doc is not None:
         try:
             vault_key = _open_vault_key(doc)
@@ -1921,7 +1921,7 @@ def backup(dest: str, *, passphrase: str | None = None) -> dict[str, Any]:
         return {"ok": False, "error": str(e), "sync": False}
     files: dict[str, str] = {}
     root = vault_dir()
-    for name in ("store.enc", "meta.json", "passkey.wrap.enc"):
+    for name in ("store.enc", "meta.json", "passkey.wrap.enc", "audit.jsonl"):
         p = root / name
         if p.is_file():
             files[name] = p.read_text(encoding="utf-8")
@@ -1972,8 +1972,8 @@ def backup(dest: str, *, passphrase: str | None = None) -> dict[str, Any]:
     }
 
 
-def restore(src: str, *, passphrase: str | None = None) -> dict[str, Any]:
-    """Restore a backup into WICK_HOME/vault. Overwrites store files."""
+def restore(src: str, *, passphrase: str | None = None, force: bool = False) -> dict[str, Any]:
+    """Restore a backup into WICK_HOME/vault. Refuses to clobber unless force=True."""
     pw = (passphrase or os.environ.get("WICK_VAULT_BACKUP_PASSPHRASE") or "").strip()
     if not pw:
         return {"ok": False, "error": "missing_backup_passphrase", "sync": False}
@@ -2007,10 +2007,18 @@ def restore(src: str, *, passphrase: str | None = None) -> dict[str, Any]:
         root.chmod(0o700)
     except OSError:
         pass
+    existing = _paths()["store"]
+    if existing.is_file() and existing.stat().st_size > 2 and not force:
+        return {
+            "ok": False,
+            "error": "vault_exists",
+            "hint": "Refusing to overwrite an existing store. Pass force=True or --force.",
+            "sync": False,
+        }
     files = payload.get("files") if isinstance(payload.get("files"), dict) else {}
     written = []
     for name, text in files.items():
-        if name not in {"store.enc", "meta.json", "passkey.wrap.enc", "passkey.wrap"}:
+        if name not in {"store.enc", "meta.json", "passkey.wrap.enc", "passkey.wrap", "audit.jsonl"}:
             continue
         dest = root / name
         if name == "passkey.wrap":
@@ -2032,6 +2040,82 @@ def restore(src: str, *, passphrase: str | None = None) -> dict[str, Any]:
         "sync": False,
         "revealed": False,
         "hint": "This is a file copy, not multi-device live sync.",
+    }
+
+
+def harden() -> dict[str, Any]:
+    """Convert a standing filekey vault to passphrase mode and delete master.key.
+
+    Requires WICK_VAULT_PASSPHRASE. Never prints the passphrase. Not an HSM.
+    """
+    pw = _passphrase()
+    if not pw:
+        return {
+            "ok": False,
+            "error": "missing_passphrase",
+            "hint": "Set WICK_VAULT_PASSPHRASE then wick vault harden. This deletes master.key.",
+            "standing_key": True,
+        }
+    key_path = _paths()["key"]
+    if not key_path.is_file() and kdf_mode() != "filekey":
+        return {
+            "ok": True,
+            "already": True,
+            "standing_key": False,
+            "kdf": kdf_mode(),
+            "hint": "Already passphrase-mode; no master.key on disk.",
+            "revealed": False,
+        }
+    wrap_plain = None
+    try:
+        wrap_plain = passkey_wrap_key()
+    except Exception:
+        wrap_plain = None
+    try:
+        entries = _read_store()
+    except ValueError as e:
+        return {"ok": False, "error": str(e), "standing_key": key_path.is_file()}
+
+    aside = None
+    if key_path.is_file():
+        aside = key_path.with_name("master.key.aside")
+        try:
+            key_path.replace(aside)
+        except OSError as e:
+            return {"ok": False, "error": "unlink_failed", "detail": str(e)}
+
+    try:
+        _write_store(entries, rekey=True)
+        if wrap_plain is not None and vcrypto is not None:
+            header = _read_header()
+            if header is not None:
+                wrap = _wrap_key_from_header(header)
+                enc = vault_dir() / "passkey.wrap.enc"
+                sealed = vcrypto.seal(wrap, wrap_plain, b"wick-passkey-wrap-key")
+                enc.write_text(json.dumps(sealed, separators=(",", ":")), encoding="utf-8")
+                os.chmod(enc, 0o600)
+        lock()
+        if aside is not None and aside.is_file():
+            aside.unlink()
+    except Exception as e:
+        if aside is not None and aside.is_file():
+            try:
+                aside.replace(key_path)
+                os.chmod(key_path, 0o600)
+            except OSError:
+                pass
+        return {"ok": False, "error": "harden_failed", "detail": str(e)[:120]}
+
+    _audit("harden", ok=True, detail="passphrase")
+    return {
+        "ok": True,
+        "standing_key": False,
+        "kdf": kdf_mode(),
+        "master_key": False,
+        "hint": "master.key removed. Unlock with WICK_VAULT_PASSPHRASE. Not an HSM.",
+        "revealed": False,
+        "sync": False,
+        "audited": False,
     }
 
 
@@ -2066,12 +2150,27 @@ def doctor() -> dict[str, Any]:
     checks.append({"name": "proton_pass_cli", "ok": bool(st["proton_pass"]["available"])})
     checks.append({"name": "keepassxc_cli", "ok": bool(st["keepassxc"]["available"])})
     sess = session_status()
+    standing = bool(sess.get("standing_key"))
     checks.append(
         {
             "name": "standing_key",
             "ok": True,
-            "present": bool(sess.get("standing_key")),
-            "detail": "filekey on disk — not a locked passphrase vault" if sess.get("standing_key") else "passphrase_or_missing",
+            "present": standing,
+            "detail": "filekey on disk — not a locked passphrase vault" if standing else "passphrase_or_missing",
+            "hint": (
+                "wick vault harden — convert to passphrase and delete master.key"
+                if standing
+                else None
+            ),
+        }
+    )
+    audit = read_audit(limit=500)
+    checks.append(
+        {
+            "name": "audit_chain",
+            "ok": bool(audit.get("chain_ok")),
+            "total": audit.get("total"),
+            "hint": None if audit.get("chain_ok") else "audit.jsonl hash chain broken",
         }
     )
     checks.append({"name": "third_party_audit", "ok": True, "audited": False})

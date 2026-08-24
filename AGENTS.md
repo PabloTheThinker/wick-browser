@@ -192,7 +192,7 @@ wick session export job42     # redacted cookie metadata
 
 `WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts. `WICK_BLOCK_HOSTS` is a denylist with the same syntax; **deny wins**. Pin the same rules in a file with `WICK_POLICY` / `$WICK_HOME/policy.json` and inspect them with `wick shields --policy`.
 
-`WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) refuses local resolve/fill until `wick vault grant --url` is active. `WICK_VAULT_STRICT=1` also relocks after fill. Both off by default — file-key mode still has a standing disk key. `wick vault backup` / `restore` are encrypted file copies, not live sync.
+`WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) refuses local resolve/fill until `wick vault grant --url` is active. `WICK_VAULT_STRICT=1` also relocks after fill. Both off by default — file-key mode still has a standing disk key. `WICK_VAULT_PASSPHRASE=… wick vault harden` deletes `master.key`. `wick vault backup` / `restore` are encrypted file copies, not live sync. `wick vault restore --force` is required to overwrite an existing store.
 
 `wick session export NAME` writes cookie **names/domains/flags**, not values. `export --reveal` (full-act) includes values; importing a redacted export fails with `redacted_export_not_importable`.
 
@@ -200,7 +200,7 @@ wick session export job42     # redacted cookie metadata
 
 Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth. WebRTC LAN IPs are blocked; Client Hints are reduced. Canvas/WebGL farbling is **not** claimed.
 
-CAPTCHA / Cloudflare / Turnstile / GeeTest / Friendly Captcha / AWS WAF pages halt vault `login` / secret `fill` / `passkey` with `human_challenge`. A desktop computer-use agent (Hermes, Grokbot, `WICK_HEADLESS=0`, or `WICK_CHALLENGE_COMPUTER_USE=1`) may `cu` / `click_xy` / `type` the puzzle like a person. After the widget is gone, `wick act login URL --after-challenge` fills. Wick will not send puzzles to a third-party service. Live third-party login walls are unproven — fixtures only.
+CAPTCHA / Cloudflare / Turnstile / GeeTest / Friendly Captcha / AWS WAF pages halt vault `login` / secret `fill` / `passkey` with `human_challenge`. `wick challenge URL` detects a public wall (observe-only; never login). A desktop computer-use agent (Hermes, Grokbot, `WICK_HEADLESS=0`, or `WICK_CHALLENGE_COMPUTER_USE=1`) may `cu` / `click_xy` / `type` the puzzle like a person. After the widget is gone, `wick act login URL --after-challenge` fills. Wick will not send puzzles to a third-party service.
 
 ## Speed
 

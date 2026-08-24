@@ -26,6 +26,8 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 - Challenge detect: vault login/secrets halt; desktop computer-use may click/type the widget
 - GeeTest / Friendly Captcha / AWS WAF / DataDome / PerimeterX markers + late-loaded iframe URLs (fixtures, not live GitHub/Google/banks)
 - `WICK_VAULT_STRICT` / policy `vault_strict` — grant-required + relock after fill (off by default)
+- `wick vault harden` — passphrase mode, delete standing `master.key`
+- `wick challenge URL` — observe-only detect on a public page (never login, never solve)
 - `wick vault backup` / `restore` (encrypted file snapshot, not live sync) and hash-chained `wick vault audit`
 - WebRTC IP guard + Client Hint reduction; fingerprint *probes* reported, farbling not claimed
 - Passkey filewrap seal (`passkey.wrap.enc` under the vault wrap key); honest TPM/PKCS#11 probe (`hsm: false` here)

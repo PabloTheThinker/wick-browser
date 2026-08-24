@@ -79,6 +79,7 @@ Env:
 - `WICK_VAULT_LOCK_TTL` — default session seconds (900)
 - `WICK_VAULT_RELOCK_AFTER_FILL=1` — drop session after a successful fill/login
 - `WICK_VAULT_STRICT=1` — grant-required + relock after fill (off by default)
+- `WICK_VAULT_PASSPHRASE` + `wick vault harden` — delete standing `master.key`
 - `WICK_VAULT_BACKUP_PASSPHRASE` — encrypts `wick vault backup` / decrypts `restore` (file snapshot, not sync)
 - File-key mode without an explicit lock stays auto-unlocked (agent default). `lock` in file-key mode is a no-op unless a session grant is active.
 
