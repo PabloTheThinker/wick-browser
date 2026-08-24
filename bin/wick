@@ -448,6 +448,78 @@ def stop_one(name: str, port: int) -> dict:
 
 
 
+def chrome_observe_fetch(
+    url: str,
+    dump: str = "markdown",
+    max_chars: int = 12000,
+    wait_ms: int = 2000,
+) -> dict:
+    """Observe via Chromium when Lightpanda is not installed.
+
+    Agents still get title / excerpt / links / role= hints. Heavier than
+    Lightpanda — only used as a fallback.
+    """
+    if not VENV_PY.exists():
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "lightpanda_not_found",
+            "hint": "wick install-engine, or python3 -m venv .venv && .venv/bin/playwright install chromium",
+        }
+    if not chrome_up():
+        st = start_chrome()
+        if not st.get("ok"):
+            return {
+                "ok": False,
+                "product": "wick",
+                "error": "observe_engine_missing",
+                "lightpanda": False,
+                "chromium": st,
+                "hint": "wick install-engine or wick start --engine chromium",
+            }
+    env = os.environ.copy()
+    env["WICK_CHROME_PORT"] = str(CHROME_PORT)
+    env["WICK_HOME"] = str(HOME)
+    t0 = time.time()
+    try:
+        proc = subprocess.run(
+            [
+                str(VENV_PY),
+                str(ROOT / "lib" / "chrome_actions.py"),
+                "observe",
+                url,
+                dump or "markdown",
+                str(int(max_chars or 12000)),
+                str(int(wait_ms or 2000)),
+            ],
+            env=env,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "product": "wick", "error": "chrome_observe_timeout"}
+    try:
+        out = json.loads((proc.stdout or "").strip() or "{}")
+    except Exception:
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "bad_observe_json",
+            "stdout": (proc.stdout or "")[:200],
+        }
+    if not isinstance(out, dict):
+        return {"ok": False, "product": "wick", "error": "bad_observe_json"}
+    out.setdefault("product", "wick")
+    out.setdefault("engine", "chromium")
+    out.setdefault("fallback", "no_lightpanda")
+    out.setdefault("ms", int((time.time() - t0) * 1000))
+    if proc.returncode != 0 and out.get("ok") is not False:
+        out["ok"] = False
+    return out
+
+
 def lp_fetch(
     url: str | list[str],
     dump: str = "markdown",
@@ -501,7 +573,19 @@ def lp_fetch(
 
     lp_bin = find_lightpanda()
     if not lp_bin:
-        return {"ok": False, "product": "wick", "error": "lightpanda_not_found"}
+        if len(urls) == 1:
+            return chrome_observe_fetch(
+                urls[0],
+                dump=dump,
+                max_chars=max_chars,
+                wait_ms=2000 if wait_ms is None else wait_ms,
+            )
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "lightpanda_not_found",
+            "hint": "wick install-engine, or snap one URL at a time (Chromium observe fallback)",
+        }
 
     ensure()
     cmd: list[str] = [str(lp_bin), "fetch", *urls, "--json"]
@@ -2124,6 +2208,10 @@ def _gather_snap(
                     "parallel": False,
                 },
             }
+            if tree_r.get("engine"):
+                tree_only["engine"] = tree_r["engine"]
+            if tree_r.get("fallback"):
+                tree_only["fallback"] = tree_r["fallback"]
             if wick_observe_cache is not None and cache_key:
                 wick_observe_cache.put(cache_key, tree_only)
             return tree_only
@@ -2168,6 +2256,12 @@ def _gather_snap(
             "parallel": not skip_markdown,
         },
     }
+    engine = md.get("engine") or tree_r.get("engine")
+    if engine:
+        gathered["engine"] = engine
+    fallback = md.get("fallback") or tree_r.get("fallback")
+    if fallback:
+        gathered["fallback"] = fallback
     if skip_markdown:
         gathered["tree_only"] = True
         excerpt_bits = [tree_title or ""] + [
@@ -2625,6 +2719,15 @@ def _rpc_handlers() -> dict:
           if denied:
               return denied
       rest = [str(x) for x in (args.get("rest") or [])]
+      ac = args.get("after_challenge")
+      if ac:
+          rest.append("--after-challenge")
+          if isinstance(ac, (int, float)) and not isinstance(ac, bool):
+              rest.append(str(int(ac)))
+          elif args.get("after_challenge_ms"):
+              rest.append(str(int(args["after_challenge_ms"])))
+      if args.get("no_submit"):
+          rest.append("--no-submit")
       if args.get("expect_url_fragment"):
           rest += ["--expect-url-fragment", str(args["expect_url_fragment"])]
       if args.get("expect_element"):
@@ -2785,6 +2888,11 @@ def _rpc_handlers() -> dict:
           concurrency=int(args.get("concurrency") or 4),
       )
 
+  def _challenge(args: dict) -> dict:
+      if wick_challenge is None:
+          return {"ok": False, "error": "challenge_module_missing"}
+      return wick_challenge.probe(str(args.get("url") or ""))
+
   def _version(_args: dict) -> dict:
       return {"ok": True, "product": "wick", "version": VERSION}
 
@@ -2811,6 +2919,7 @@ def _rpc_handlers() -> dict:
       "snap_many": _snap_many,
       "snap-many": _snap_many,
       "tools": _tools,
+      "challenge": _challenge,
       "version": _version,
       "status": _status,
   }

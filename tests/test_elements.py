@@ -126,5 +126,27 @@ class TestPlanSuggestions(unittest.TestCase):
             os.environ.pop("WICK_CHALLENGE_COMPUTER_USE", None)
 
 
+class TestChromiumObserveShape(unittest.TestCase):
+    def test_tree_from_elements_round_trips(self):
+        tree = elements.tree_from_elements(
+            "Example Domain",
+            [{"role": "link", "name": "More information", "interactive": True}],
+        )
+        els = elements.parse_tree_text(tree)
+        self.assertEqual(els[0]["role"], "document")
+        link = next(e for e in els if e["role"] == "link")
+        self.assertEqual(link["name"], "More information")
+        self.assertEqual(link["hint"], 'role=link[name="More information"]')
+
+    def test_markdown_from_observe_keeps_links(self):
+        md = elements.markdown_from_observe(
+            "Example Domain",
+            "This domain is for use in documentation examples.",
+            [{"text": "More information", "href": "https://www.iana.org/domains/example"}],
+        )
+        self.assertIn("# Example Domain", md)
+        self.assertIn("[More information](https://www.iana.org/domains/example)", md)
+
+
 if __name__ == "__main__":
     unittest.main()

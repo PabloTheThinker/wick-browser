@@ -56,6 +56,65 @@ try:
     import challenge as wick_challenge
 except Exception:
     wick_challenge = None  # type: ignore
+try:
+    import elements as wick_elements
+except Exception:
+    wick_elements = None  # type: ignore
+
+_OBSERVE_JS = """() => {
+  const text = (document.body && document.body.innerText) || '';
+  const title = document.title || '';
+  const links = [];
+  const seenHref = new Set();
+  for (const a of document.querySelectorAll('a[href]')) {
+    const href = a.href || '';
+    if (!href || seenHref.has(href)) continue;
+    seenHref.add(href);
+    links.push({
+      text: (a.innerText || a.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
+      href,
+    });
+    if (links.length >= 40) break;
+  }
+  const roleOf = (el) => {
+    const r = (el.getAttribute('role') || '').toLowerCase();
+    if (r) return r;
+    const t = el.tagName.toLowerCase();
+    if (t === 'a') return 'link';
+    if (t === 'button') return 'button';
+    if (t === 'textarea') return 'textbox';
+    if (t === 'select') return 'combobox';
+    if (t === 'input') {
+      const ty = (el.getAttribute('type') || 'text').toLowerCase();
+      if (ty === 'submit' || ty === 'button' || ty === 'reset') return 'button';
+      if (ty === 'checkbox') return 'checkbox';
+      if (ty === 'radio') return 'radio';
+      if (ty === 'search') return 'searchbox';
+      return 'textbox';
+    }
+    return t;
+  };
+  const nameOf = (el) => {
+    const al = el.getAttribute('aria-label');
+    if (al) return al.trim();
+    if (el.labels && el.labels[0]) return (el.labels[0].innerText || '').trim();
+    const ph = el.getAttribute('placeholder');
+    if (ph) return ph.trim();
+    return (el.innerText || el.value || el.getAttribute('name') || '').replace(/\\s+/g, ' ').trim();
+  };
+  const elements = [];
+  const sel = 'a[href], button, input, textarea, select, [role=button], [role=link], [role=textbox], [role=searchbox]';
+  document.querySelectorAll(sel).forEach((el) => {
+    if (elements.length >= 40) return;
+    const role = roleOf(el);
+    const name = nameOf(el).slice(0, 80);
+    let hint = null;
+    if (name) hint = 'role=' + role + '[name="' + name.replace(/"/g, '') + '"]';
+    else if (el.id) hint = 'css=#' + el.id;
+    elements.push({role, name, interactive: true, hint});
+  });
+  return {title, text, links, elements};
+}"""
 
 
 def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
@@ -833,6 +892,84 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
     elif action == "eval":
         val = page.evaluate(args[0])
         return 0, {"ok": True, "result": val}
+
+    elif action == "observe":
+        start_url = args[0] if args else None
+        dump = (args[1] if len(args) > 1 else "markdown") or "markdown"
+        max_chars = int(args[2]) if len(args) > 2 else 12000
+        wait_ms = int(args[3]) if len(args) > 3 else 1200
+        if start_url:
+            start_url, err = _guard_nav_url(start_url)
+            if err:
+                return 1, err
+            page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                page.wait_for_timeout(max(0, min(wait_ms, 4000)))
+            except Exception:
+                pass
+        data: dict = {}
+        try:
+            data = page.evaluate(_OBSERVE_JS) or {}
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        title = str(data.get("title") or page.title() or "")
+        text = str(data.get("text") or "")
+        links = data.get("links") if isinstance(data.get("links"), list) else []
+        raw_els = data.get("elements") if isinstance(data.get("elements"), list) else []
+        elements: list[dict] = []
+        for i, el in enumerate(raw_els[:40], start=1):
+            if not isinstance(el, dict):
+                continue
+            role = str(el.get("role") or "generic")
+            name = str(el.get("name") or "")
+            hint = el.get("hint")
+            if not hint and wick_elements is not None:
+                hint = wick_elements._hint(role, name)
+            elif not hint and name:
+                hint = f'role={role}[name="{name}"]'
+            item = {
+                "id": i,
+                "role": role,
+                "name": name,
+                "interactive": True,
+                "hint": hint,
+            }
+            elements.append(item)
+        if wick_elements is not None:
+            tree = wick_elements.tree_from_elements(title, elements)
+            md = wick_elements.markdown_from_observe(title, text, links)
+        else:
+            tree = f"1 document '{title.replace(chr(39), '')}'"
+            md = (f"# {title}\n\n" if title else "") + text
+        html = ""
+        if dump == "html":
+            try:
+                html = page.content()
+            except Exception:
+                html = ""
+        if dump == "semantic_tree_text":
+            content = tree[:max_chars]
+        elif dump == "html":
+            content = html[:max_chars]
+        else:
+            content = md[:max_chars]
+        return 0, {
+            "ok": True,
+            "url": page.url,
+            "title": title,
+            "http_ok": True,
+            "http_status": 200,
+            "dump": dump,
+            "chars": len(content),
+            "content": content,
+            "excerpt": re.sub(r"\s+", " ", text).strip()[:600],
+            "links": links[:25],
+            "elements": elements,
+            "engine": "chromium",
+            "fallback": "no_lightpanda",
+        }
 
     elif action == "content":
         text = page.inner_text("body")

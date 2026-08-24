@@ -173,8 +173,17 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 "rest": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Action arguments. cu: [optional screenshot path]. click_xy: [x, y]. click_n: [n]. type: [text]. fill: [selector, text_or_secret_ref]. Optional --expect-url-fragment FRAG and --expect-element SEL.",
+                    "description": "Action arguments. cu: [optional screenshot path]. click_xy: [x, y]. click_n: [n]. type: [text]. fill: [selector, text_or_secret_ref]. login: [url, optional --after-challenge MS, --no-submit]. Optional --expect-url-fragment FRAG and --expect-element SEL.",
                     "default": [],
+                },
+                "after_challenge": {
+                    "type": "integer",
+                    "description": "With login: wait this many ms for a challenge widget to clear, then fill (does not solve).",
+                },
+                "no_submit": {
+                    "type": "boolean",
+                    "description": "With login: fill but do not click submit.",
+                    "default": False,
                 },
             },
             "required": ["action"],
@@ -275,6 +284,17 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["action"],
+        },
+    ),
+    _fn(
+        "wick_challenge",
+        "Observe-only CAPTCHA/bot-wall detect. GET public HTML. Never logs in. Never solves.",
+        {
+            "type": "object",
+            "properties": {
+                "url": URL_PROP,
+            },
+            "required": ["url"],
         },
     ),
 ]

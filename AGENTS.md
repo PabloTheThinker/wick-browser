@@ -6,7 +6,7 @@ Wick is a **browser for agents** — not a human GUI with an API bolted on.
 
 ## Recommended loop: snap → plan → ask → act
 
-1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) 
+1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements). Lightpanda when installed; Chromium observe fallback otherwise (`engine: chromium`). 
 2. **`wick plan URL --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
 3. **`wick ask URL --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
 4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Computer-use: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON). After a challenge widget: `wick act login URL --after-challenge` waits until it is gone, then fills.

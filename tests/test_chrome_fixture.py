@@ -153,6 +153,22 @@ class TestChromeFixture(unittest.TestCase):
         waited = self._run("wait_text", "Welcome Ada")
         self.assertTrue(waited.get("ok"), waited)
 
+    def test_observe_returns_role_hints_for_agents(self):
+        out = self._run("observe", self.base, "markdown", "4000", "200")
+        self.assertTrue(out.get("ok"), out)
+        self.assertEqual(out.get("engine"), "chromium")
+        self.assertTrue(
+            "CU Fixture" in (out.get("title") or "")
+            or "Computer Use Lab" in (out.get("title") or "")
+            or "Computer Use Lab" in (out.get("content") or ""),
+            out.get("title"),
+        )
+        names = " ".join(str(e.get("name") or "") for e in out.get("elements") or [])
+        self.assertIn("Go", names)
+        hints = [e.get("hint") for e in out.get("elements") or [] if e.get("hint")]
+        self.assertTrue(any(str(h).startswith("role=") for h in hints), hints)
+        self.assertIn("#", out.get("content") or "")
+
     def test_expect_url_fragment_after_login_submit(self):
         self.assertTrue(self._run("goto", self.base).get("ok"))
         filled_u = self._run("fill", "css=#user", "agent@example.com")

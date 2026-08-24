@@ -42,6 +42,8 @@ _NAME_TO_CMD = {
     "wick_session": "session",
     "wick_vault": "vault",
     "wick_snap_many": "snap_many",
+    "challenge": "challenge",
+    "wick_challenge": "challenge",
 }
 
 _TOOL_META: list[dict[str, Any]] = [
@@ -130,6 +132,11 @@ _TOOL_META: list[dict[str, Any]] = [
             "properties": {
                 "action": {"type": "string"},
                 "rest": {"type": "array", "items": {"type": "string"}, "default": []},
+                "after_challenge": {
+                    "type": "integer",
+                    "description": "With login: wait this many ms for a widget to clear, then fill.",
+                },
+                "no_submit": {"type": "boolean", "default": False},
                 "expect_url_fragment": {"type": "string"},
                 "expect_element": {"type": "string"},
             },
@@ -168,6 +175,17 @@ _TOOL_META: list[dict[str, Any]] = [
                 "name": {"type": "string"},
             },
             "required": ["action"],
+        },
+    },
+    {
+        "name": "challenge",
+        "description": "Observe-only CAPTCHA/bot-wall detect. GET public HTML. Never logs in. Never solves.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+            },
+            "required": ["url"],
         },
     },
     {

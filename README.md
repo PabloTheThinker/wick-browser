@@ -151,6 +151,7 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_HEADED` | `0` | Headed Chromium on the current `DISPLAY` (`wick start --headed`). `DISPLAY` alone is not enough. |
 | `WICK_HEADLESS` | `1` | Set `0` for the same headed desktop launch. `--xvfb` still starts a virtual X server. |
 | `WICK_CHROME_NO_SANDBOX` | `0` | Add `--no-sandbox` when the host user-namespace sandbox cannot start. |
+| `WICK_ENGINE` | `auto` | `auto` prefers Lightpanda for observe; Chromium is used for act and as the snap fallback when Lightpanda is absent. |
 | `WICK_WEBRTC_IP_GUARD` | `1` | Chromium: no LAN ICE candidates |
 | `WICK_REDUCE_CLIENT_HINTS` | `1` | Drop User-Agent Client Hints (privacy, not UA spoof) |
 | `WICK_PASSKEY_REQUIRE_HSM` | `0` | Refuse passkey create unless a TPM/PKCS#11 token is present |

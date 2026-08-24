@@ -69,6 +69,44 @@ def _hint(role: str, name: str) -> str | None:
     return f'text={name}'
 
 
+def tree_from_elements(title: str, elements: list[dict[str, Any]]) -> str:
+    """Lightpanda-shaped semantic_tree_text so snap/plan/ask share one parser."""
+    safe_title = (title or "").replace("'", "")
+    lines = [f"1 document '{safe_title}'"]
+    for i, el in enumerate(elements or [], start=2):
+        role = re.sub(r"[^a-zA-Z0-9_-]", "", str(el.get("role") or "generic")) or "generic"
+        name = (el.get("name") or "").replace("'", "")
+        if name:
+            lines.append(f"{i} [i] {role} '{name}'")
+        else:
+            lines.append(f"{i} [i] {role}")
+    return "\n".join(lines)
+
+
+def markdown_from_observe(
+    title: str,
+    text: str,
+    links: list[dict[str, Any]] | None = None,
+) -> str:
+    """Cheap markdown so extract_md_links / ask still work on the Chromium path."""
+    parts: list[str] = []
+    if title:
+        parts.append(f"# {title.strip()}")
+        parts.append("")
+    for link in links or []:
+        href = str(link.get("href") or "").strip()
+        if not href:
+            continue
+        label = (link.get("text") or href).replace("]", " ").replace("\n", " ").strip() or href
+        parts.append(f"[{label}]({href})")
+    body = (text or "").strip()
+    if body:
+        if parts:
+            parts.append("")
+        parts.append(body)
+    return "\n".join(parts)
+
+
 def interactive_only(elements: list[dict[str, Any]], limit: int = 50) -> list[dict[str, Any]]:
     hit = [e for e in elements if e.get("interactive")]
     return hit[:limit]

@@ -31,9 +31,19 @@ def test_lp_fetch_rejects_blank_url():
 
 def test_lp_fetch_reports_missing_lightpanda(monkeypatch):
     monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
+
+    def no_chrome(*_a, **_k):
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "observe_engine_missing",
+            "hint": "wick install-engine or wick start --engine chromium",
+        }
+
+    monkeypatch.setattr(wick, "chrome_observe_fetch", no_chrome)
     result = wick.lp_fetch("https://example.com/")
     assert result["ok"] is False
-    assert result["error"] == "lightpanda_not_found"
+    assert result["error"] in ("lightpanda_not_found", "observe_engine_missing")
     assert result["product"] == "wick"
 
 
@@ -162,6 +172,53 @@ def test_chrome_launch_mode_headed_flag(monkeypatch):
     monkeypatch.delenv("WICK_HEADED", raising=False)
     monkeypatch.delenv("WICK_HEADLESS", raising=False)
     assert wick.chrome_launch_mode(headed=True) == ("0", "0")
+
+
+def test_lp_fetch_falls_back_to_chromium_observe(monkeypatch):
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
+
+    def fake_observe(url, dump="markdown", max_chars=12000, wait_ms=2000):
+        return {
+            "ok": True,
+            "url": url,
+            "title": "Example Domain",
+            "content": "# Example Domain\n\n[More information](https://example.com/info)",
+            "http_ok": True,
+            "http_status": 200,
+            "engine": "chromium",
+            "fallback": "no_lightpanda",
+            "ms": 12,
+            "chars": 40,
+        }
+
+    monkeypatch.setattr(wick, "chrome_observe_fetch", fake_observe)
+    out = wick.lp_fetch("https://example.com/", dump="markdown")
+    assert out["ok"] is True
+    assert out["engine"] == "chromium"
+    assert out["fallback"] == "no_lightpanda"
+    assert "Example Domain" in (out.get("content") or "")
+
+
+def test_rpc_challenge_handler(monkeypatch):
+    handlers = wick._rpc_handlers()
+    assert "challenge" in handlers
+
+    def fake_probe(url):
+        return {
+            "ok": True,
+            "product": "wick",
+            "mode": "observe",
+            "login": False,
+            "solves": False,
+            "url": url,
+            "found": False,
+        }
+
+    monkeypatch.setattr(wick.wick_challenge, "probe", fake_probe)
+    out = handlers["challenge"]({"url": "https://example.com/"})
+    assert out.get("login") is False
+    assert out.get("solves") is False
+    assert out.get("mode") == "observe"
 
 
 def test_act_login_cli_forwards_after_challenge(monkeypatch):
