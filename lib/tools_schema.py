@@ -242,12 +242,27 @@ WICK_TOOLS: list[dict[str, Any]] = [
                         "lock",
                         "grant",
                         "passkey-new",
+                        "audit",
+                        "backup",
+                        "restore",
                     ],
-                    "description": "Metadata actions only; never request reveal. unlock/lock/grant need WICK_PROFILE=full-act. passkey-new stores an origin-bound WebAuthn credential (no key in JSON).",
+                    "description": "Metadata actions only; never request reveal. unlock/lock/grant/backup/restore need WICK_PROFILE=full-act. audit is observe-safe (no secrets). backup/restore are file copies, not live sync.",
                 },
                 "name": {
                     "type": "string",
-                    "description": "Entry name for passkey-new.",
+                    "description": "Entry name for passkey-new, or backup/restore path.",
+                },
+                "dest": {
+                    "type": "string",
+                    "description": "Destination path for backup (encrypted snapshot; passphrase from WICK_VAULT_BACKUP_PASSPHRASE).",
+                },
+                "src": {
+                    "type": "string",
+                    "description": "Source path for restore.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Audit tail length (default 50). Never includes secrets.",
                 },
                 "url": {
                     "type": "string",

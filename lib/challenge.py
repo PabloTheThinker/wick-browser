@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -59,6 +60,11 @@ _MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("hcaptcha", ("hcaptcha.com", "hcaptcha", "h-captcha")),
     ("recaptcha", ("google.com/recaptcha", "recaptcha/api", "g-recaptcha", "recaptcha")),
     ("funcaptcha", ("funcaptcha", "arkoselabs", "arkose")),
+    ("geetest", ("geetest_holder", "geetest.com", "geetest")),
+    ("friendlycaptcha", ("frc-captcha", "friendlycaptcha.com", "friendly-captcha")),
+    ("aws_waf", ("token.awswaf.com", "awswaf.com/challenge", "aws-waf")),
+    ("datadome", ("captcha-delivery.com", "datadome.co", "datadome")),
+    ("perimeterx", ("px-captcha", "perimeterx")),
     ("cloudflare", ("just a moment", "cdn-cgi/challenge", "cf-browser-check", "cf-challenge")),
     ("captcha", ("captcha",)),
 )
@@ -205,8 +211,9 @@ def detect(
 
 
 def page_challenge(page) -> dict[str, Any]:
-    """Inspect a live Chromium page. Best-effort; never throws into the caller."""
+    """Inspect a live Chromium page, including iframe URLs (late-loaded widgets)."""
     url = title = html = ""
+    frames: list[str] = []
     try:
         url = page.url
     except Exception:
@@ -219,7 +226,28 @@ def page_challenge(page) -> dict[str, Any]:
         html = page.content()[:40000]
     except Exception:
         html = ""
-    return detect(url=url, title=title, html=html)
+    try:
+        for fr in getattr(page, "frames", []) or []:
+            frames.append(str(getattr(fr, "url", "") or ""))
+    except Exception:
+        pass
+    extra = " ".join(frames)
+    return detect(url=url, title=title, html=(html + " " + extra).strip())
+
+
+def wait_cleared(page, timeout_ms: int = 15000, interval_ms: int = 250) -> dict[str, Any] | None:
+    """Poll until no challenge widget is visible. None = cleared. Last hit if not."""
+    last = page_challenge(page)
+    if not last.get("found"):
+        return None
+    deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
+    pause = max(0.005, int(interval_ms) / 1000.0)
+    while time.monotonic() < deadline:
+        time.sleep(pause)
+        last = page_challenge(page)
+        if not last.get("found"):
+            return None
+    return last
 
 
 def deny_if_halted(

@@ -100,7 +100,7 @@ New in 0.6.1:
 
 New in 0.9:
 
-- **`wick act login URL`** — Chrome/Brave-style autofill: match a vault entry to the page origin, fill username/password (and TOTP if present), optionally submit. Secrets never appear in JSON.
+- **`wick act login URL`** — Chrome/Brave-style autofill: match a vault entry to the page origin, fill username/password (and TOTP if present), optionally submit. Secrets never appear in JSON. `--after-challenge [ms]` waits until a detected widget is gone, then fills (does not solve).
 - **`wick vault suggest --url`** — agent-safe recipe (`refs` + form hints + `login_cmd`).
 - Fill of `vault://` refs is **origin-bound** to the live page. Phishing URLs do not get the password.
 

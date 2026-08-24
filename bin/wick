@@ -1398,6 +1398,41 @@ def cmd_vault(args: argparse.Namespace) -> int:
         out = wick_vault.create_passkey(name, url=url, username=getattr(args, "username", None))
         print(json.dumps(out, ensure_ascii=False))
         return 0 if out.get("ok") else 1
+    if act == "audit":
+        print(json.dumps(wick_vault.read_audit(limit=int(getattr(args, "limit", None) or 50)), ensure_ascii=False))
+        return 0
+    if act == "backup":
+        dest = getattr(args, "dest", None) or getattr(args, "name", None) or ""
+        if not dest:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_dest",
+                        "hint": "WICK_VAULT_BACKUP_PASSPHRASE=… wick vault backup PATH",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.backup(dest)
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "restore":
+        src = getattr(args, "src", None) or getattr(args, "name", None) or ""
+        if not src:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_src",
+                        "hint": "WICK_VAULT_BACKUP_PASSPHRASE=… wick vault restore PATH",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.restore(src)
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown_vault_action:{act}"}))
     return 2
 
@@ -2586,6 +2621,26 @@ def _rpc_handlers() -> dict:
           if not name or not url:
               return {"ok": False, "error": "missing_name_or_url"}
           return wick_vault.create_passkey(name, url=url, username=args.get("username"))
+      if act == "audit":
+          return wick_vault.read_audit(limit=int(args.get("limit") or 50))
+      if act == "backup":
+          dest = args.get("dest") or args.get("path") or args.get("name") or ""
+          if not dest:
+              return {
+                  "ok": False,
+                  "error": "missing_dest",
+                  "hint": "Set dest/path and WICK_VAULT_BACKUP_PASSPHRASE. Not live sync.",
+              }
+          return wick_vault.backup(dest)
+      if act == "restore":
+          src = args.get("src") or args.get("path") or args.get("name") or ""
+          if not src:
+              return {
+                  "ok": False,
+                  "error": "missing_src",
+                  "hint": "Set src/path and WICK_VAULT_BACKUP_PASSPHRASE. Not live sync.",
+              }
+          return wick_vault.restore(src)
       return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
 
   def _session(args: dict) -> dict:
@@ -2954,9 +3009,13 @@ def main() -> int:
             "status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen",
             "resolve", "suggest", "autofill", "lock", "unlock", "grant",
             "passkey-new", "passkey_new",
+            "audit", "backup", "restore",
         ],
     )
-    p.add_argument("name", nargs="?", help="entry name (set/get/rm) or ignored")
+    p.add_argument("name", nargs="?", help="entry name (set/get/rm) or backup/restore path")
+    p.add_argument("--dest", help="destination path for vault backup")
+    p.add_argument("--src", help="source path for vault restore")
+    p.add_argument("--limit", type=int, default=50, help="audit tail length (default 50)")
     p.add_argument("--password", help="password value for set (prefer env WICK_VAULT_SET_PASSWORD)")
     p.add_argument("--username")
     p.add_argument("--url", help="associated URL (set/match)")

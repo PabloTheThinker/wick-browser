@@ -65,9 +65,15 @@ class TestFilewrapSeal(HsmCase):
 
     def test_wrap_key_is_0600(self):
         hsm.wrap(b"abc", aad=b"aad")
-        key = Path(self._tmp.name) / "vault" / "passkey.wrap"
-        self.assertTrue(key.is_file())
-        self.assertEqual(oct(key.stat().st_mode & 0o777), "0o600")
+        enc = Path(self._tmp.name) / "vault" / "passkey.wrap.enc"
+        raw = Path(self._tmp.name) / "vault" / "passkey.wrap"
+        if enc.is_file():
+            self.assertEqual(oct(enc.stat().st_mode & 0o777), "0o600")
+            self.assertFalse(raw.is_file())
+            self.assertNotEqual(enc.stat().st_size, 32)
+        else:
+            self.assertTrue(raw.is_file())
+            self.assertEqual(oct(raw.stat().st_mode & 0o777), "0o600")
 
     def test_wrap_never_claims_hardware_backend(self):
         sealed = hsm.wrap(b"abc", aad=b"aad")

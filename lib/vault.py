@@ -105,17 +105,43 @@ def _paths() -> dict[str, Path]:
     }
 
 
+def _audit_prev_hash(path: Path) -> str:
+    if not path.is_file():
+        return "0" * 64
+    try:
+        last = ""
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    last = line
+        if not last:
+            return "0" * 64
+        obj = json.loads(last)
+        return str(obj.get("hash") or "0" * 64)
+    except (OSError, ValueError):
+        return "0" * 64
+
+
+def _audit_hash(prev: str, line: dict[str, Any]) -> str:
+    body = {k: line[k] for k in sorted(line) if k != "hash"}
+    blob = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256((prev + "|" + blob).encode("utf-8")).hexdigest()
+
+
 def _audit(action: str, ref: str = "", ok: bool = True, detail: str = "") -> None:
-    """Append audit line — never includes secret material."""
+    """Append a hash-chained audit line — never includes secret material."""
     try:
         p = _paths()["audit"]
-        line = {
+        prev = _audit_prev_hash(p)
+        line: dict[str, Any] = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "action": action,
             "ref": _redact_ref(ref) if ref else "",
             "ok": bool(ok),
             "detail": (detail or "")[:160],
+            "prev": prev,
         }
+        line["hash"] = _audit_hash(prev, line)
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
         try:
@@ -647,8 +673,32 @@ def _active_grants() -> list[dict[str, Any]]:
     return out
 
 
+def vault_strict() -> bool:
+    """Standing-key hygiene: grants required + relock after fill."""
+    raw = (os.environ.get("WICK_VAULT_STRICT") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    pol = _sibling_module("policy")
+    if pol is not None:
+        try:
+            return bool(pol.effective().get("vault_strict"))
+        except Exception:
+            pass
+    return False
+
+
+def _relock_after_fill() -> bool:
+    if vault_strict():
+        return True
+    return os.environ.get("WICK_VAULT_RELOCK_AFTER_FILL") == "1"
+
+
 def _require_grant() -> bool:
     """True when empty grants mean deny (policy / WICK_VAULT_REQUIRE_GRANT)."""
+    if vault_strict():
+        return True
     pol = _sibling_module("policy")
     if pol is not None:
         try:
@@ -828,7 +878,8 @@ def session_status() -> dict[str, Any]:
         "grants": [{"origin": str(g.get("origin")), "expires": _iso(int(g.get("exp") or 0))} for g in grants],
         "grant_count": len(grants),
         "require_grant": _require_grant(),
-        "relock_after_fill": os.environ.get("WICK_VAULT_RELOCK_AFTER_FILL") == "1",
+        "relock_after_fill": _relock_after_fill(),
+        "strict": vault_strict(),
         "lock_ttl": _lock_ttl(),
     }
 
@@ -1469,7 +1520,7 @@ def resolve_for_fill(
         else:
             origin_reason = "unbound_allowed"
     relocked = False
-    if r.get("backend") == "local" and os.environ.get("WICK_VAULT_RELOCK_AFTER_FILL") == "1":
+    if r.get("backend") == "local" and _relock_after_fill():
         lock()
         relocked = True
     return str(r["value"]), {
@@ -1767,6 +1818,221 @@ def generate_password(length: int = 24) -> dict[str, Any]:
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_"
     pw = "".join(secrets.choice(alphabet) for _ in range(length))
     return {"ok": True, "password": pw, "length": length, "revealed": True}
+
+
+def passkey_wrap_key() -> bytes:
+    """32-byte filewrap key, sealed with the vault wrap key (not raw on disk)."""
+    crypto = _require_crypto()
+    ensure_local_key()
+    header = _read_header()
+    if header is None:
+        raise ValueError("corrupt_store")
+    wrap = _wrap_key_from_header(header)
+    enc_path = vault_dir() / "passkey.wrap.enc"
+    raw_path = vault_dir() / "passkey.wrap"
+    aad = b"wick-passkey-wrap-key"
+    if enc_path.is_file():
+        obj = json.loads(enc_path.read_text(encoding="utf-8"))
+        return crypto.open_sealed(wrap, obj, aad)
+    if raw_path.is_file() and raw_path.stat().st_size == 32:
+        key = raw_path.read_bytes()
+    else:
+        key = crypto.random_key()
+    sealed = crypto.seal(wrap, key, aad)
+    tmp = enc_path.with_suffix(".enc.tmp")
+    tmp.write_text(json.dumps(sealed, separators=(",", ":")), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(enc_path)
+    os.chmod(enc_path, 0o600)
+    if raw_path.is_file():
+        try:
+            raw_path.unlink()
+        except OSError:
+            pass
+    return key
+
+
+def read_audit(*, limit: int = 50) -> dict[str, Any]:
+    """Hash-chained audit tail. Never includes secret material."""
+    path = _paths()["audit"]
+    entries: list[dict[str, Any]] = []
+    chain_ok = True
+    prev = "0" * 64
+    if path.is_file():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        for raw in lines:
+            if not raw.strip():
+                continue
+            try:
+                obj = json.loads(raw)
+            except ValueError:
+                chain_ok = False
+                continue
+            if not isinstance(obj, dict):
+                chain_ok = False
+                continue
+            expect = _audit_hash(str(obj.get("prev") or prev), obj)
+            if obj.get("prev") != prev or obj.get("hash") != expect:
+                chain_ok = False
+            prev = str(obj.get("hash") or prev)
+            entries.append(
+                {
+                    "ts": obj.get("ts"),
+                    "action": obj.get("action"),
+                    "ref": obj.get("ref"),
+                    "ok": obj.get("ok"),
+                    "detail": obj.get("detail"),
+                    "hash": obj.get("hash"),
+                }
+            )
+    tail = entries[-max(1, min(500, int(limit))) :] if entries else []
+    return {
+        "ok": True,
+        "product": "wick",
+        "component": "vault",
+        "count": len(tail),
+        "total": len(entries),
+        "chain_ok": chain_ok,
+        "entries": tail,
+        "revealed": False,
+        "sync": False,
+        "audited": False,
+    }
+
+
+def backup(dest: str, *, passphrase: str | None = None) -> dict[str, Any]:
+    """Encrypted portable snapshot. Not live sync. Passphrase never audited."""
+    pw = (passphrase or os.environ.get("WICK_VAULT_BACKUP_PASSPHRASE") or "").strip()
+    if not pw:
+        return {
+            "ok": False,
+            "error": "missing_backup_passphrase",
+            "hint": "Set WICK_VAULT_BACKUP_PASSPHRASE or pass passphrase= to backup()",
+            "sync": False,
+        }
+    if vcrypto is None or not vcrypto.available():
+        return {"ok": False, "error": "aead_unavailable", "sync": False}
+    try:
+        ensure_local_key()
+    except ValueError as e:
+        return {"ok": False, "error": str(e), "sync": False}
+    files: dict[str, str] = {}
+    root = vault_dir()
+    for name in ("store.enc", "meta.json", "passkey.wrap.enc"):
+        p = root / name
+        if p.is_file():
+            files[name] = p.read_text(encoding="utf-8")
+    raw_wrap = root / "passkey.wrap"
+    if raw_wrap.is_file() and "passkey.wrap.enc" not in files:
+        files["passkey.wrap"] = base64.b64encode(raw_wrap.read_bytes()).decode("ascii")
+    master = _load_master()
+    payload = {
+        "format": "wick-vault-backup-1",
+        "product": "wick",
+        "sync": False,
+        "created": _iso(),
+        "files": files,
+        "master_key": vcrypto.b64e(master) if master else None,
+        "kdf": kdf_mode(),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    salt = vcrypto.random_salt()
+    stretched, kdf_name, params = vcrypto.passphrase_key(pw, salt)
+    key = vcrypto.derive_wrap_key(stretched, salt)
+    blob = vcrypto.seal(key, raw, b"wick-vault-backup|1")
+    envelope = {
+        "format": "wick-vault-backup-1",
+        "kdf": kdf_name,
+        "kdf_params": params,
+        "salt": vcrypto.b64e(salt),
+        "blob": blob,
+        "sync": False,
+    }
+    target = Path(dest).expanduser()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(json.dumps(envelope, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(target)
+        os.chmod(target, 0o600)
+    except OSError as e:
+        return {"ok": False, "error": "write_failed", "detail": str(e), "sync": False}
+    _audit("backup", ok=True, detail=target.name)
+    return {
+        "ok": True,
+        "path": str(target),
+        "mode": "0600",
+        "sync": False,
+        "revealed": False,
+        "hint": "Copy this file to another machine and wick vault restore. Not live sync.",
+    }
+
+
+def restore(src: str, *, passphrase: str | None = None) -> dict[str, Any]:
+    """Restore a backup into WICK_HOME/vault. Overwrites store files."""
+    pw = (passphrase or os.environ.get("WICK_VAULT_BACKUP_PASSPHRASE") or "").strip()
+    if not pw:
+        return {"ok": False, "error": "missing_backup_passphrase", "sync": False}
+    if vcrypto is None or not vcrypto.available():
+        return {"ok": False, "error": "aead_unavailable", "sync": False}
+    path = Path(src).expanduser()
+    try:
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {"ok": False, "error": "bad_backup_file", "detail": str(e), "sync": False}
+    if not isinstance(envelope, dict) or envelope.get("format") != "wick-vault-backup-1":
+        return {"ok": False, "error": "bad_backup_format", "sync": False}
+    try:
+        salt = vcrypto.b64d(str(envelope.get("salt") or ""))
+        stretched, _n, _p = vcrypto.passphrase_key(
+            pw,
+            salt,
+            kdf=str(envelope.get("kdf") or ""),
+            params=envelope.get("kdf_params") if isinstance(envelope.get("kdf_params"), dict) else {},
+        )
+        key = vcrypto.derive_wrap_key(stretched, salt)
+        raw = vcrypto.open_sealed(key, envelope.get("blob"), b"wick-vault-backup|1")
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as e:
+        return {"ok": False, "error": "bad_mac_or_key", "detail": str(e)[:80], "sync": False}
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "bad_backup_payload", "sync": False}
+    root = vault_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        root.chmod(0o700)
+    except OSError:
+        pass
+    files = payload.get("files") if isinstance(payload.get("files"), dict) else {}
+    written = []
+    for name, text in files.items():
+        if name not in {"store.enc", "meta.json", "passkey.wrap.enc", "passkey.wrap"}:
+            continue
+        dest = root / name
+        if name == "passkey.wrap":
+            dest.write_bytes(base64.b64decode(str(text)))
+        else:
+            dest.write_text(str(text), encoding="utf-8")
+        os.chmod(dest, 0o600)
+        written.append(name)
+    mk = payload.get("master_key")
+    if isinstance(mk, str) and mk:
+        key_path = _paths()["key"]
+        key_path.write_bytes(vcrypto.b64d(mk))
+        os.chmod(key_path, 0o600)
+        written.append("master.key")
+    _audit("restore", ok=True, detail=",".join(written))
+    return {
+        "ok": True,
+        "restored": written,
+        "sync": False,
+        "revealed": False,
+        "hint": "This is a file copy, not multi-device live sync.",
+    }
 
 
 def doctor() -> dict[str, Any]:

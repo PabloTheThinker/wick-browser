@@ -70,6 +70,76 @@ class TestChallengeDetect(_CuEnv, unittest.TestCase):
         self.assertTrue(hit["found"])
         self.assertEqual(hit["kind"], "cloudflare")
 
+    def test_geetest_friendly_waf_datadome_markers(self):
+        self.assertEqual(challenge.detect(html='<div class="geetest_holder"></div>')["kind"], "geetest")
+        self.assertEqual(
+            challenge.detect(html='<div class="frc-captcha" data-sitekey="x"></div>')["kind"],
+            "friendlycaptcha",
+        )
+        self.assertEqual(
+            challenge.detect(html='<script src="https://token.awswaf.com/challenge.js">')["kind"],
+            "aws_waf",
+        )
+        self.assertEqual(
+            challenge.detect(html='<script src="https://geo.captcha-delivery.com/captcha">')["kind"],
+            "datadome",
+        )
+        self.assertEqual(challenge.detect(html='<div id="px-captcha"></div>')["kind"], "perimeterx")
+
+    def test_page_challenge_sees_late_loaded_iframe_url(self):
+        class _Frame:
+            url = "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/turnstile"
+
+        class _Page:
+            url = "https://example.com/login"
+            frames = [_Frame()]
+
+            def title(self):
+                return "Sign in"
+
+            def content(self):
+                return "<form><input type=password></form>"
+
+        hit = challenge.page_challenge(_Page())
+        self.assertTrue(hit["found"])
+        self.assertEqual(hit["kind"], "turnstile")
+
+    def test_wait_cleared_polls_until_widget_gone(self):
+        class _Page:
+            url = "https://example.com/login"
+            frames = []
+
+            def __init__(self):
+                self.n = 0
+
+            def title(self):
+                return "Sign in"
+
+            def content(self):
+                self.n += 1
+                if self.n < 3:
+                    return '<div class="cf-turnstile"></div>'
+                return "<form><input type=password></form>"
+
+        cleared = challenge.wait_cleared(_Page(), timeout_ms=1000, interval_ms=5)
+        self.assertIsNone(cleared)
+
+    def test_wait_cleared_times_out_if_still_present(self):
+        class _Page:
+            url = "https://example.com/login"
+            frames = []
+
+            def title(self):
+                return "Sign in"
+
+            def content(self):
+                return '<div class="cf-turnstile"></div>'
+
+        hit = challenge.wait_cleared(_Page(), timeout_ms=40, interval_ms=10)
+        self.assertIsNotNone(hit)
+        self.assertTrue(hit["found"])
+        self.assertEqual(hit["kind"], "turnstile")
+
     def test_docs_mentioning_captcha_is_not_a_challenge(self):
         hit = challenge.detect(
             url="https://example.com/security",

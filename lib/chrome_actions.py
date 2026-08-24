@@ -77,6 +77,33 @@ def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
     return normalized, None
 
 
+def parse_login_args(args: list[str]) -> dict:
+    """Split login flags. `--after-challenge [ms]` waits for a widget to clear."""
+    submit = True
+    after = False
+    timeout_ms = 15000
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--no-submit":
+            submit = False
+        elif tok == "--after-challenge":
+            after = True
+            if i + 1 < len(args) and str(args[i + 1]).isdigit():
+                timeout_ms = max(1, int(args[i + 1]))
+                i += 1
+        else:
+            rest.append(tok)
+        i += 1
+    return {
+        "rest": rest,
+        "submit": submit,
+        "after_challenge": after,
+        "timeout_ms": timeout_ms,
+    }
+
+
 def _wait_login_surface(page, timeout: int = 10000) -> None:
     try:
         page.wait_for_selector(
@@ -641,8 +668,9 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
         return 0, out
 
     elif action == "login":
-        rest = [a for a in args if a != "--no-submit"]
-        submit = "--no-submit" not in args
+        flags = parse_login_args(args)
+        rest = flags["rest"]
+        submit = flags["submit"]
         start_url = rest[0] if rest else None
         if start_url:
             start_url, err = _guard_nav_url(start_url)
@@ -654,6 +682,15 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
+        if flags["after_challenge"] and wick_challenge is not None:
+            still = wick_challenge.wait_cleared(page, timeout_ms=flags["timeout_ms"])
+            if still and still.get("found"):
+                blocked = wick_challenge.deny_if_halted(still, action="login", secret=True)
+                if blocked:
+                    blocked = dict(blocked)
+                    blocked["after_challenge"] = True
+                    blocked["waited_ms"] = flags["timeout_ms"]
+                    return 1, blocked
         blocked = _challenge_halt(page, "login", secret=True)
         if blocked:
             return 1, blocked
@@ -686,6 +723,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
                             "filled": [],
                             "refs": [m.get("passkey_ref") or f"vault://{m.get('name')}/passkey"],
                             "submitted": True,
+                            "after_challenge": bool(flags["after_challenge"]),
                             "vault": {"revealed": False, "chars": None},
                         }
                 except Exception:
@@ -755,6 +793,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             "entry": m.get("name"),
             "origin_reason": m.get("reason"),
             "submitted": submitted,
+            "after_challenge": bool(flags["after_challenge"]),
             "vault": {"revealed": False, "chars": None},
         }
 

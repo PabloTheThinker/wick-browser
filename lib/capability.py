@@ -149,7 +149,17 @@ _SAFE_ACTS = frozenset(
     }
 )
 _OBSERVE_VAULT = frozenset(
-    {"status", "backends", "doctor", "list", "match", "suggest", "autofill", "init"}
+    {
+        "status",
+        "backends",
+        "doctor",
+        "list",
+        "match",
+        "suggest",
+        "autofill",
+        "init",
+        "audit",
+    }
 )
 _SAFE_SESSION = frozenset(
     {"list", "new", "use", "save", "path", "drop", "sweep", "meta", "promote", "export"}

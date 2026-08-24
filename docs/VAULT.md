@@ -39,6 +39,12 @@ wick vault gen --length 28               # generate (prints once)
 
 # Agent login — same motion as Chrome/Brave autofill (secret never in JSON)
 wick act login https://github.com/login
+# after a computer-use click through a widget (does not solve it):
+wick act login https://example.com/login --after-challenge 15000
+
+wick vault audit                         # hash-chained log tail — never secrets
+WICK_VAULT_BACKUP_PASSPHRASE='…' wick vault backup /tmp/wick-vault.bak
+WICK_VAULT_BACKUP_PASSPHRASE='…' wick vault restore /tmp/wick-vault.bak
 # or manual, still origin-bound to the live page:
 wick act fill 'css=input[name=login]' 'vault://github/username'
 wick act fill 'css=input[name=password]' 'vault://github/password'
@@ -126,10 +132,13 @@ These three need `WICK_PROFILE=full-act`; `status` / `list` / `match` / `suggest
 | `WICK_VAULT_LOCK_TTL` | Session seconds, default `900` |
 | `WICK_VAULT_RELOCK_AFTER_FILL=1` | `lock()` right after a successful local fill |
 | `WICK_VAULT_REQUIRE_GRANT=1` | Empty grants deny every local resolve/fill/passkey export (`grant_required:missing_grant`) |
+| `WICK_VAULT_STRICT=1` | Grant-required **and** relock after fill (standing file keys stay off the fill path) |
+| `WICK_VAULT_BACKUP_PASSPHRASE` | Encrypts `wick vault backup` / decrypts `restore` — never logged, never in JSON |
 
 - **File-key mode (default):** `master.key` on disk means the vault is effectively auto-unlocked. `lock` clears the session and its grants; it cannot un-know a key that is still sitting in a file.
 - **Passphrase mode:** without `WICK_VAULT_PASSPHRASE` and without a live session, `resolve` / `list` fail with `vault_locked`. `unlock` stores a short-TTL GCM wrap of the vault key next to a 32-byte session key in `session.json` (`0600`) — a TTL convenience, not a hardware keystore.
-- **Grants:** while any grant is active, local `resolve` / `resolve_for_fill` are denied unless the saved origin *and* the live page origin match a non-expired grant (`grant_required:…`). `WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) also denies when **no** grant is active. `match` / `suggest` keep returning metadata only.
+- **Grants:** while any grant is active, local `resolve` / `resolve_for_fill` are denied unless the saved origin *and* the live page origin match a non-expired grant (`grant_required:…`). `WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) also denies when **no** grant is active. `WICK_VAULT_STRICT=1` (or policy `vault_strict: true`) turns on grant-required **and** relock-after-fill. Off by default. `match` / `suggest` keep returning metadata only.
+- **Backup / restore:** encrypted file snapshot (`wick-vault-backup-1`). Not live sync, not multi-device vault. `audit` is a hash-chained local log (`chain_ok`); `audited: false` still means no third-party review.
 
 ## Storage layout
 
@@ -138,7 +147,8 @@ These three need `WICK_PROFILE=full-act`; `status` / `list` / `match` / `suggest
   master.key            # 0600 (or WICK_VAULT_KEY env; absent in passphrase mode)
   store.enc             # 0600 JSON — wickvault2: AES-256-GCM, wrap→vault→item keys
   session.json          # 0600, TTL — unlock state + origin grants (deleted by lock)
-  audit.jsonl           # actions + redacted refs — never secret values
+  audit.jsonl           # hash-chained actions + redacted refs — never secret values
+  passkey.wrap.enc      # 0600 — passkey filewrap key sealed under the vault wrap key
   config.json           # backend paths
   meta.json             # format + unwrap-failure counter (no secrets)
 ```
@@ -153,7 +163,7 @@ These three need `WICK_PROFILE=full-act`; `status` / `list` / `match` / `suggest
 ## Honest limits
 
 - Local crypto is open and reviewable (`lib/vault_crypto.py`, `lib/vault.py`): AES-256-GCM + HKDF-SHA256 with a vault/item key hierarchy. It is **not** Proton cloud sync, **not** third-party audited, and **not** an HSM.
-- File-key mode keeps a standing 32-byte key in `master.key` — comparable to an unlocked browser profile. Prefer `WICK_VAULT_PASSPHRASE` plus `unlock`/`grant` TTLs on shared machines.
+- File-key mode keeps a standing 32-byte key in `master.key` — comparable to an unlocked browser profile. Prefer `WICK_VAULT_PASSPHRASE` plus `unlock`/`grant` TTLs, or `WICK_VAULT_STRICT=1`, on shared machines. There is no cloud sync.
 - Same-user malware can read `WICK_HOME`; `0700` is isolation, not magic.
 - Proton Pass and KeePassXC require their CLIs on `PATH`.
 - TOTP can be stored as a field (`vault://name/otp`).

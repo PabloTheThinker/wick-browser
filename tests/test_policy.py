@@ -30,6 +30,7 @@ _ENV = (
     "WICK_APPROVE",
     "WICK_APPROVE_ONCE",
     "WICK_VAULT_REQUIRE_GRANT",
+    "WICK_VAULT_STRICT",
     "WICK_HALT_ON_CHALLENGE",
     "WICK_CHALLENGE_COMPUTER_USE",
     "WICK_PASSKEY_REQUIRE_HSM",
@@ -72,6 +73,7 @@ class TestNoPolicyFile(PolicyCase):
         self.assertFalse(eff["allow_private"])
         self.assertEqual(eff["require_approval"], [])
         self.assertFalse(eff["vault_require_grant"])
+        self.assertFalse(eff["vault_strict"])
         self.assertTrue(eff["halt_on_challenge"])
         self.assertFalse(eff["challenge_computer_use"])
         self.assertFalse(eff["passkey_require_hsm"])
@@ -253,6 +255,15 @@ class TestPrivateAndGrant(PolicyCase):
         os.environ["WICK_VAULT_REQUIRE_GRANT"] = "1"
         self.assertTrue(policy.vault_require_grant())
 
+    def test_vault_strict_file_and_env(self):
+        self.write({"vault_strict": True})
+        self.assertTrue(policy.vault_strict())
+        self.assertTrue(policy.effective()["vault_strict"])
+        os.environ["WICK_VAULT_STRICT"] = "0"
+        self.assertFalse(policy.vault_strict())
+        os.environ["WICK_VAULT_STRICT"] = "1"
+        self.assertTrue(policy.vault_strict())
+
     def test_halt_and_hsm_file_and_env(self):
         self.write({"halt_on_challenge": False, "passkey_require_hsm": True})
         self.assertFalse(policy.effective()["halt_on_challenge"])
@@ -319,6 +330,7 @@ class TestValidateAndWrite(PolicyCase):
                 "allow_private": False,
                 "require_approval": ["login", "passkey"],
                 "vault_require_grant": True,
+                "vault_strict": True,
                 "halt_on_challenge": False,
                 "passkey_require_hsm": True,
                 "extra": 1,
@@ -328,6 +340,7 @@ class TestValidateAndWrite(PolicyCase):
         self.assertEqual(res["ignored"], ["extra"])
         self.assertEqual(res["policy"]["profile"], "safe-act")
         self.assertTrue(res["policy"]["vault_require_grant"])
+        self.assertTrue(res["policy"]["vault_strict"])
         self.assertFalse(res["policy"]["halt_on_challenge"])
         self.assertTrue(res["policy"]["passkey_require_hsm"])
 

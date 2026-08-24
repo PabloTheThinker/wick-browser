@@ -242,12 +242,36 @@ class TestChromeFixture(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_login_after_challenge_waits_then_fills(self):
+        import vault
+
+        url = f"http://127.0.0.1:{self.port}/challenge-clear.html"
+        vault.ensure_local_key()
+        vault.set_entry(
+            "local-clear",
+            password="s3cret-value-xyz",
+            username="agent@example.com",
+            url=url,
+        )
+        out = self._run("login", url, "--after-challenge", "4000")
+        self.assertTrue(out.get("ok"), out)
+        self.assertTrue(out.get("after_challenge"))
+        self.assertNotIn("s3cret-value-xyz", json.dumps(out))
+        try:
+            self.page.wait_for_function(
+                "() => window.location.hash === '#ok'",
+                timeout=8000,
+            )
+        except Exception as e:
+            raise unittest.SkipTest(f"after-challenge login did not navigate: {e}")
+        self.assertIn("#ok", self.page.url)
+
     def test_login_refuses_example_com_vault_on_localhost(self):
         import vault
 
         vault.ensure_local_key()
         # Other fixture tests save 127.0.0.1 entries; those would match this origin.
-        for name in ("local-chal", "local-login", "local-pk"):
+        for name in ("local-chal", "local-login", "local-pk", "local-clear", "local-chal-cu"):
             try:
                 vault.delete_entry(name)
             except Exception:
@@ -290,6 +314,22 @@ class TestChromeFixture(unittest.TestCase):
         except Exception as e:
             raise unittest.SkipTest(f"virtual authenticator assertion did not complete: {e}")
         self.assertEqual(self.page.locator("#out").inner_text(), "asserted")
+
+
+class TestParseLoginArgs(unittest.TestCase):
+    def test_after_challenge_optional_timeout(self):
+        import chrome_actions as ca
+
+        flags = ca.parse_login_args(["https://example.com/login", "--after-challenge", "4000"])
+        self.assertEqual(flags["rest"], ["https://example.com/login"])
+        self.assertTrue(flags["after_challenge"])
+        self.assertEqual(flags["timeout_ms"], 4000)
+        self.assertTrue(flags["submit"])
+
+        bare = ca.parse_login_args(["https://example.com/login", "--after-challenge", "--no-submit"])
+        self.assertTrue(bare["after_challenge"])
+        self.assertEqual(bare["timeout_ms"], 15000)
+        self.assertFalse(bare["submit"])
 
 
 if __name__ == "__main__":

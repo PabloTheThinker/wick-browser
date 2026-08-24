@@ -20,6 +20,8 @@ Wick includes an **open-source local vault** plus bridges to Proton Pass CLI, Ke
 - Only entry **names** are cleartext on disk; passwords, usernames, URLs, notes, and TOTP secrets live inside the blob. Failed unwrap → `bad_mac_or_key`, and 8 failures trigger a 30-second `vault_locked_cooldown`.
 - `wick vault unlock` / `lock` / `grant` (full-act only) issue just-in-time, origin-scoped access; `WICK_VAULT_RELOCK_AFTER_FILL=1` drops the session after a fill.
 - `WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant`) treats an empty grant list as deny (`grant_required:missing_grant`). Off by default so file-key agents keep working.
+- `WICK_VAULT_STRICT=1` (or policy `vault_strict`) is grant-required **plus** relock after fill. Still off by default.
+- `wick vault backup` / `restore` write an encrypted portable snapshot (`WICK_VAULT_BACKUP_PASSPHRASE`). Not live sync. `wick vault audit` tails a hash-chained local log (no secrets). `audited: false` still means no third-party review.
 - Honest limits: file-key mode keeps a standing key on disk (like an unlocked browser profile), `session.json` holds its session key in a `0600` file, and none of this is Proton cloud sync, third-party audited, or HSM-backed. `wick vault doctor` reports `standing_key`, `audited: false`, `hsm: false`, `sync: false`. `wickvault1` is read-only and migrates on the next write.
 
 See [VAULT.md](VAULT.md) and [VAULT-CRYPTO.md](VAULT-CRYPTO.md). Combine with shields + session isolation for the Brave-inspired stack — still **no** fingerprint farbling claim.
@@ -32,7 +34,7 @@ See [VAULT.md](VAULT.md) and [VAULT-CRYPTO.md](VAULT-CRYPTO.md). Combine with sh
 
 `WICK_REQUIRE_APPROVAL=1` blocks `login` / `fill` / `passkey` / `eval` / `download` until a human or outer harness runs `wick approve …` or sets `WICK_APPROVE`. A page cannot mint this token.
 
-Passkeys: vault-stored resident keys, PKCS#8 wrapped with a dedicated AES-256-GCM filewrap key (`$WICK_HOME/vault/passkey.wrap`, `0600`) on top of wickvault2. Injected via Chromium's CDP virtual authenticator. Not Touch ID / hardware keys. `wick vault doctor` / `wick shields` report `hsm: false` unless `/dev/tpmrm0` or a real PKCS#11 token is present. `WICK_PASSKEY_REQUIRE_HSM=1` refuses create when no hardware. Private keys never appear in agent JSON. See [PASSKEYS.md](PASSKEYS.md).
+Passkeys: vault-stored resident keys, PKCS#8 wrapped with a dedicated AES-256-GCM filewrap key sealed as `$WICK_HOME/vault/passkey.wrap.enc` (legacy raw `passkey.wrap` is migrated). Injected via Chromium's CDP virtual authenticator. Not Touch ID / hardware keys. `wick vault doctor` / `wick shields` report `hsm: false` unless `/dev/tpmrm0` or a real PKCS#11 token is present. `WICK_PASSKEY_REQUIRE_HSM=1` refuses create when no hardware. Private keys never appear in agent JSON. See [PASSKEYS.md](PASSKEYS.md).
 
 ## Fetch / navigation guards (0.9)
 
@@ -65,7 +67,7 @@ Wick does **not** provide Brave-class fingerprint farbling (canvas / WebGL / aud
 - WebRTC LAN/CGNAT IP guard (`WICK_WEBRTC_IP_GUARD=1`, Chromium `disable_non_proxied_udp`)
 - Reduce User-Agent Client Hints (`WICK_REDUCE_CLIENT_HINTS=1`) — less entropy, not a forged UA
 - Report known fingerprinting hosts/scripts on observe (`security.fingerprint_probes`)
-- Detect CAPTCHA / Cloudflare / Turnstile / hCaptcha / reCAPTCHA. Vault **login / secret fill / passkey** halt (`human_challenge`). On a headed desktop or with `WICK_CHALLENGE_COMPUTER_USE=1`, computer-use (`cu` / `click_xy` / `type`) may complete the widget the way Hermes or Grokbot would. Wick will not send puzzles to a third-party service.
+- Detect CAPTCHA / Cloudflare / Turnstile / hCaptcha / reCAPTCHA / GeeTest / Friendly Captcha / AWS WAF / DataDome / PerimeterX (markup + late-loaded iframe URLs). Vault **login / secret fill / passkey** halt (`human_challenge`). On a headed desktop or with `WICK_CHALLENGE_COMPUTER_USE=1`, computer-use (`cu` / `click_xy` / `type`) may complete the widget the way Hermes or Grokbot would. Then `wick act login URL --after-challenge` waits until the widget is gone and fills. Wick will not send puzzles to a third-party service. Live GitHub/Google/bank walls are still unproven — fixtures only.
 
 Treat shields as request filtering, isolation, and honest halt — not “undetectable browsing.”
 

@@ -9,7 +9,7 @@ Wick is a **browser for agents** — not a human GUI with an API bolted on.
 1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) 
 2. **`wick plan URL --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
 3. **`wick ask URL --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
-4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Computer-use: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON).
+4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Computer-use: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON). After a challenge widget: `wick act login URL --after-challenge` waits until it is gone, then fills.
 5. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
 
 Still available when you need them: `wick elements URL` (dense target list) and `wick open URL --fast` (full markdown, the long read). **`wick observe`** is an alias for **`wick snap`**.
@@ -154,6 +154,8 @@ wick vault set example --username me --url https://example.com/login   # passwor
 wick vault grant --url https://example.com/login --ttl 120             # JIT: resolve only this origin
 wick vault suggest --url https://example.com/login                     # refs + form hints, no secrets
 wick act login https://example.com/login                               # origin-bound autofill + submit
+wick act login https://example.com/login --after-challenge             # wait until widget gone, then fill
+wick vault audit                                                       # hash-chained log; no secrets
 wick vault lock                                                        # drop grants / passphrase session
 ```
 
@@ -190,7 +192,7 @@ wick session export job42     # redacted cookie metadata
 
 `WICK_ALLOW_HOSTS=example.com,.github.com` restricts fetch/goto/login to those hosts. `WICK_BLOCK_HOSTS` is a denylist with the same syntax; **deny wins**. Pin the same rules in a file with `WICK_POLICY` / `$WICK_HOME/policy.json` and inspect them with `wick shields --policy`.
 
-`WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) refuses local resolve/fill until `wick vault grant --url` is active. Off by default — file-key mode still has a standing disk key.
+`WICK_VAULT_REQUIRE_GRANT=1` (or policy `vault_require_grant: true`) refuses local resolve/fill until `wick vault grant --url` is active. `WICK_VAULT_STRICT=1` also relocks after fill. Both off by default — file-key mode still has a standing disk key. `wick vault backup` / `restore` are encrypted file copies, not live sync.
 
 `wick session export NAME` writes cookie **names/domains/flags**, not values. `export --reveal` (full-act) includes values; importing a redacted export fails with `redacted_export_not_importable`.
 
@@ -198,7 +200,7 @@ wick session export job42     # redacted cookie metadata
 
 Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth. WebRTC LAN IPs are blocked; Client Hints are reduced. Canvas/WebGL farbling is **not** claimed.
 
-CAPTCHA / Cloudflare / Turnstile pages halt vault `login` / secret `fill` / `passkey` with `human_challenge`. A desktop computer-use agent (Hermes, Grokbot, `WICK_HEADLESS=0`, or `WICK_CHALLENGE_COMPUTER_USE=1`) may `cu` / `click_xy` / `type` the puzzle like a person. Wick will not send puzzles to a third-party service.
+CAPTCHA / Cloudflare / Turnstile / GeeTest / Friendly Captcha / AWS WAF pages halt vault `login` / secret `fill` / `passkey` with `human_challenge`. A desktop computer-use agent (Hermes, Grokbot, `WICK_HEADLESS=0`, or `WICK_CHALLENGE_COMPUTER_USE=1`) may `cu` / `click_xy` / `type` the puzzle like a person. After the widget is gone, `wick act login URL --after-challenge` fills. Wick will not send puzzles to a third-party service. Live third-party login walls are unproven — fixtures only.
 
 ## Speed
 

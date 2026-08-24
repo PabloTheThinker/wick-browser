@@ -85,6 +85,9 @@ wick vault init
 wick vault set mysite --username me --password '…' --url https://example.com/login
 wick vault suggest --url https://example.com/login
 wick act login https://example.com/login
+wick act login https://example.com/login --after-challenge 15000   # wait until widget gone, then fill
+WICK_VAULT_BACKUP_PASSPHRASE='…' wick vault backup /tmp/wick-vault.bak
+wick vault audit
 # or: wick act fill 'css=input[type=password]' 'vault://mysite/password'
 
 # Act (Chromium — heavy contact)
@@ -138,6 +141,7 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_APPROVE` | — | Harness-granted actions (`login`, `passkey`, `*`) |
 | `WICK_POLICY` | `$WICK_HOME/policy.json` | Policy file: host allow/deny, profile, approvals, vault grant (env wins; deny unions) |
 | `WICK_VAULT_REQUIRE_GRANT` | `0` | Deny vault resolve/fill unless `wick vault grant --url` is active |
+| `WICK_VAULT_STRICT` | `0` | Grant-required **and** relock after fill (standing file keys stay off the fill path) |
 | `WICK_HALT_ON_CHALLENGE` | `1` | Halt vault login/secret fill/passkey on a CAPTCHA/bot-wall |
 | `WICK_CHALLENGE_COMPUTER_USE` | `0` | Allow `cu` / click / type on a challenge (desktop Hermes / Grokbot). Secrets stay blocked. Auto-on when headed or an XDG user seat. |
 | `WICK_WEBRTC_IP_GUARD` | `1` | Chromium: no LAN ICE candidates |

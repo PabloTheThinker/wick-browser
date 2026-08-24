@@ -95,8 +95,17 @@ def hardware_seal_available() -> bool:
 
 
 def _ensure_wrap_key() -> bytes:
+    """Prefer the vault-sealed wrap key; fall back to a 0600 file if no vault."""
     if vcrypto is None or not vcrypto.available():
         raise ValueError("aead_unavailable")
+    try:
+        import vault as wick_vault
+
+        return wick_vault.passkey_wrap_key()
+    except ValueError:
+        raise
+    except Exception:
+        pass
     path = _wrap_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
