@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -161,6 +162,65 @@ def test_chrome_launch_mode_headed_flag(monkeypatch):
     monkeypatch.delenv("WICK_HEADED", raising=False)
     monkeypatch.delenv("WICK_HEADLESS", raising=False)
     assert wick.chrome_launch_mode(headed=True) == ("0", "0")
+
+
+def test_act_login_cli_forwards_after_challenge(monkeypatch):
+    seen: dict = {}
+
+    def fake_call(cmd, **_kw):
+        seen["cmd"] = cmd
+        return 0
+
+    monkeypatch.setattr(wick, "chrome_up", lambda: True)
+    monkeypatch.setattr(wick.subprocess, "call", fake_call)
+    ns = type(
+        "NS",
+        (),
+        {
+            "action": "login",
+            "rest": ["http://127.0.0.1:8765/challenge-clear.html"],
+            "after_challenge": 4000,
+            "no_submit": False,
+            "expect_url_fragment": None,
+            "expect_element": None,
+        },
+    )()
+    assert wick.cmd_act(ns) == 0
+    assert seen["cmd"][-4:] == [
+        "login",
+        "http://127.0.0.1:8765/challenge-clear.html",
+        "--after-challenge",
+        "4000",
+    ]
+
+
+def test_act_parser_accepts_after_challenge_and_no_submit(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wick",
+            "act",
+            "login",
+            "http://127.0.0.1/x",
+            "--after-challenge",
+            "5000",
+            "--no-submit",
+        ],
+    )
+    captured = {}
+
+    def fake_act(args):
+        captured["after"] = args.after_challenge
+        captured["no_submit"] = args.no_submit
+        captured["rest"] = args.rest
+        return 0
+
+    monkeypatch.setattr(wick, "cmd_act", fake_act)
+    assert wick.main() == 0
+    assert captured["after"] == 5000
+    assert captured["no_submit"] is True
+    assert captured["rest"] == ["http://127.0.0.1/x"]
 
 
 def test_chrome_launch_mode_display_alone_stays_headless(monkeypatch):

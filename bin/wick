@@ -1298,6 +1298,10 @@ def cmd_act(args: argparse.Namespace) -> int:
             print(json.dumps(st))
             return 1
     rest = list(args.rest or [])
+    if getattr(args, "after_challenge", None) is not None:
+        rest += ["--after-challenge", str(int(args.after_challenge))]
+    if getattr(args, "no_submit", False):
+        rest += ["--no-submit"]
     if getattr(args, "expect_url_fragment", None):
         rest += ["--expect-url-fragment", args.expect_url_fragment]
     if getattr(args, "expect_element", None):
@@ -1649,6 +1653,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                         rest.append(step["url"])
                     if step.get("no_submit") or step.get("submit") is False:
                         rest.append("--no-submit")
+                    ac = step.get("after_challenge")
+                    if ac:
+                        rest.append("--after-challenge")
+                        if isinstance(ac, (int, float)) and not isinstance(ac, bool):
+                            rest.append(str(int(ac)))
+                        elif step.get("after_challenge_ms"):
+                            rest.append(str(int(step["after_challenge_ms"])))
                 elif act in ("passkey", "passkey_register"):
                     rest = []
                     if step.get("url"):
@@ -3124,6 +3135,19 @@ def main() -> int:
     ])
     p.add_argument("rest", nargs="*",
         help="URL / selector / value / x y (click_xy) / n (click_n) / text (type)")
+    p.add_argument(
+        "--after-challenge",
+        nargs="?",
+        const=15000,
+        type=int,
+        metavar="MS",
+        help="with login: wait until a challenge widget is gone, then fill (does not solve)",
+    )
+    p.add_argument(
+        "--no-submit",
+        action="store_true",
+        help="with login: fill but do not click submit",
+    )
     p.add_argument("--expect-url-fragment", help="fail the act unless the page URL contains this fragment")
     p.add_argument("--expect-element", help="fail the act unless this selector is visible")
     _add_json_only(p)
