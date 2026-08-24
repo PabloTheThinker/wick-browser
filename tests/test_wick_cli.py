@@ -56,6 +56,7 @@ def test_lp_fetch_rejects_javascript_url(monkeypatch):
 
 def test_lp_fetch_rejects_private_url_when_blocked(monkeypatch):
     monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
+    monkeypatch.delenv("WICK_ALLOW_PRIVATE", raising=False)
     result = wick.lp_fetch("http://127.0.0.1:8080/")
     assert result["ok"] is False
     assert result["error"] in ("private_url", "dangerous_url")
