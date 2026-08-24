@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Wick CU Fixture</title>
+</head>
+<body>
+  <h1>Computer Use Lab</h1>
+  <label for="q">Query</label>
+  <input id="q" name="q" type="text" aria-label="Query">
+  <button id="go" type="button">Go</button>
+  <p id="out" hidden>Welcome</p>
+  <form id="login">
+    <label for="user">Email</label>
+    <input id="user" name="user" type="email" autocomplete="username" aria-label="Email">
+    <label for="pass">Password</label>
+    <input id="pass" name="pass" type="password" autocomplete="current-password" aria-label="Password">
+    <button type="submit">Log in</button>
+  </form>
+  <script>
+    document.getElementById("go").addEventListener("click", function () {
+      var q = document.getElementById("q").value;
+      var out = document.getElementById("out");
+      out.hidden = false;
+      out.textContent = q ? ("Welcome " + q) : "Welcome";
+    });
+    document.getElementById("login").addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      history.replaceState(null, "", "#ok");
+      var out = document.getElementById("out");
+      out.hidden = false;
+      out.textContent = "Welcome";
+    });
+  </script>
+</body>
+</html>

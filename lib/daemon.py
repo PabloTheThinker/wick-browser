@@ -118,9 +118,27 @@ def main() -> int:
             "--metrics-recording-only",
             "--password-store=basic",
             "--use-mock-keychain",
-        "--disable-blink-features=AutomationControlled",
-        "--no-pings",
+            "--disable-blink-features=AutomationControlled",
+            "--no-pings",
+            "--disable-client-side-phishing-detection",
+            "--disable-component-update",
+            "--disable-breakpad",
         ]
+        try:
+            import privacy as wick_privacy
+
+            launch_args = wick_privacy.merge_chrome_args(
+                launch_args, wick_privacy.chrome_privacy_args()
+            )
+        except Exception:
+            pass
+        extra_headers = {}
+        if os.environ.get("WICK_PRIVACY_HEADERS", "1") != "0":
+            extra_headers = {
+                "DNT": "1",
+                "Sec-GPC": "1",
+                "Upgrade-Insecure-Requests": "1",
+            }
         launch_kwargs = dict(
             user_data_dir=str(USER_DATA),
             headless=headless,
@@ -130,6 +148,7 @@ def main() -> int:
             timezone_id="America/New_York",
             ignore_https_errors=False,
             accept_downloads=True,
+            extra_http_headers=extra_headers,
             downloads_path=str(Path(os.environ.get("WICK_DOWNLOADS") or (HOME / "downloads"))),
         )
         try:
@@ -138,11 +157,18 @@ def main() -> int:
                 **launch_kwargs,
             )
         except Exception:
-            _context = _pw.chromium.launch_persistent_context(**launch_kwargs)
+            launch_kwargs.pop("extra_http_headers", None)
+            try:
+                _context = _pw.chromium.launch_persistent_context(
+                    channel="chromium",
+                    **launch_kwargs,
+                )
+            except Exception:
+                _context = _pw.chromium.launch_persistent_context(**launch_kwargs)
 
         page = _context.pages[0] if _context.pages else _context.new_page()
         try:
-            context.add_init_script(
+            _context.add_init_script(
                 "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
                 "window.chrome=window.chrome||{runtime:{}};"
             )

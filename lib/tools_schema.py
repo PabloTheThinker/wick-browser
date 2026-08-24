@@ -20,6 +20,12 @@ FAIL_HTTP_PROP = {
     "default": False,
 }
 
+PROFILE_PROP = {
+    "type": "string",
+    "enum": ["micro", "default", "full"],
+    "description": "Observe budget: micro=tree only (~0.8s); default=fast excerpt; full=longer wait.",
+}
+
 
 def _fn(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -35,11 +41,12 @@ def _fn(name: str, description: str, parameters: dict[str, Any]) -> dict[str, An
 WICK_TOOLS: list[dict[str, Any]] = [
     _fn(
         "wick_snap",
-        "Compact page snapshot: title, excerpt, links, interactive elements (primary observe).",
+        "Compact page snapshot: title, excerpt, links, interactive elements (primary observe). Use profile=micro for the cheapest first look (Hermes/Claude).",
         {
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "full": {
                     "type": "boolean",
@@ -58,6 +65,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "full": {"type": "boolean", "default": False},
                 "fail_http": FAIL_HTTP_PROP,
@@ -72,6 +80,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "fail_http": FAIL_HTTP_PROP,
             },
@@ -89,10 +98,32 @@ WICK_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Search terms (case-insensitive substring match).",
                 },
+                "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "fail_http": FAIL_HTTP_PROP,
             },
             "required": ["url", "q"],
+        },
+    ),
+    _fn(
+        "wick_snap_many",
+        "Parallel observe of many URLs (bounded concurrency). Prefer profile=micro.",
+        {
+            "type": "object",
+            "properties": {
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Absolute URLs to observe.",
+                },
+                "profile": {**PROFILE_PROP, "default": "micro"},
+                "concurrency": {
+                    "type": "integer",
+                    "description": "Max parallel fetches (1–8).",
+                    "default": 4,
+                },
+            },
+            "required": ["urls"],
         },
     ),
     _fn(
@@ -131,18 +162,18 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_act",
-        "Chromium interactive action. For passwords pass secret refs as the text arg (vault://…, pass://…, env://…) so values never enter agent context.",
+        "Chromium interactive action. Computer-use: cu (screenshot + numbered boxes), click_xy / click_n, type / type_n, key. For passwords pass secret refs (vault://…, pass://…, env://…). Prefer action=login or action=passkey (vault-backed WebAuthn via Chromium virtual authenticator — not Touch ID).",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "Action name: goto, click, fill, wait_url, scroll, pdf, …",
+                    "description": "goto, cu, click, click_xy, click_n, type, type_n, key, fill, login, passkey, passkey_register, wait_url, scroll, pdf, …",
                 },
                 "rest": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Action arguments. For fill: [selector, text_or_secret_ref].",
+                    "description": "Action arguments. cu: [optional screenshot path]. click_xy: [x, y]. click_n: [n]. type: [text]. fill: [selector, text_or_secret_ref]. Optional --expect-url-fragment FRAG and --expect-element SEL.",
                     "default": [],
                 },
             },
@@ -151,18 +182,40 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_session",
-        "Cookie/session isolation: list, new, use, save, path.",
+        "Cookie/session isolation: list, new (optional ephemeral+ttl), use, save/promote, drop, sweep, meta, path, export (redacted by default), import.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "new", "use", "save", "path"],
+                    "enum": ["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep", "export", "import"],
                 },
                 "name": {
                     "type": "string",
                     "description": "Session name (default: default).",
                     "default": "default",
+                },
+                "ephemeral": {
+                    "type": "boolean",
+                    "description": "With new: delete on sweep/auto-drop unless promoted.",
+                    "default": False,
+                },
+                "ttl": {
+                    "type": "integer",
+                    "description": "With new --ephemeral: lifetime in seconds.",
+                },
+                "owner": {
+                    "type": "string",
+                    "description": "Optional agent/owner tag.",
+                },
+                "reveal": {
+                    "type": "boolean",
+                    "description": "With export: include cookie values (full-act only).",
+                    "default": False,
+                },
+                "file": {
+                    "type": "string",
+                    "description": "With import: path to a revealed session export.",
                 },
             },
             "required": ["action"],
@@ -170,18 +223,39 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_vault",
-        "Password vault status/list/match (metadata only). For fill use secret refs: vault://name/password, pass://Vault/Item/password, env://VAR, agentmail://token — never request reveal.",
+        "Password vault status/list/match/suggest (metadata only) plus the unlock/lock/grant broker. suggest/autofill returns origin-bound refs and login cmds — never secrets. Fill via wick_act login or fill with vault:// refs.",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "backends", "doctor", "list", "match", "init"],
-                    "description": "Metadata actions only. Secrets are injected via wick_act fill with refs.",
+                    "enum": [
+                        "status",
+                        "backends",
+                        "doctor",
+                        "list",
+                        "match",
+                        "suggest",
+                        "autofill",
+                        "init",
+                        "unlock",
+                        "lock",
+                        "grant",
+                        "passkey-new",
+                    ],
+                    "description": "Metadata actions only; never request reveal. unlock/lock/grant need WICK_PROFILE=full-act. passkey-new stores an origin-bound WebAuthn credential (no key in JSON).",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Entry name for passkey-new.",
                 },
                 "url": {
                     "type": "string",
-                    "description": "URL for match (find entries by site).",
+                    "description": "URL for match (find entries by site), grant (origin to allow), or passkey-new.",
+                },
+                "ttl": {
+                    "type": "integer",
+                    "description": "Seconds for unlock (default 900) or grant (default 120).",
                 },
             },
             "required": ["action"],
@@ -197,5 +271,5 @@ def tools_export(version: str) -> dict[str, Any]:
         "version": version,
         "schema": "openai_tools_v1",
         "tools": WICK_TOOLS,
-        "hint": "Load tools[] into agent harness; call via wick rpc stdio or CLI.",
+        "hint": "ChatGPT/Grok: load tools[] then call wick rpc stdio. Claude/Hermes/Cursor: wick mcp (JSON-RPC 2.0).",
     }

@@ -56,8 +56,36 @@ try:
     import vault as wick_vault
 except Exception:
     wick_vault = None  # type: ignore
+try:
+    import origins as wick_origins
+except Exception:
+    wick_origins = None  # type: ignore
+try:
+    import observe_cache as wick_observe_cache
+except Exception:
+    wick_observe_cache = None  # type: ignore
+try:
+    import capability as wick_capability
+except Exception:
+    wick_capability = None  # type: ignore
+try:
+    import snap_profile as wick_snap_profile
+except Exception:
+    wick_snap_profile = None  # type: ignore
+try:
+    import mcp_stdio as wick_mcp
+except Exception:
+    wick_mcp = None  # type: ignore
+try:
+    import approval as wick_approval
+except Exception:
+    wick_approval = None  # type: ignore
+try:
+    import policy as wick_policy
+except Exception:
+    wick_policy = None  # type: ignore
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 
 def _hist(kind: str, **kw) -> None:
@@ -405,10 +433,6 @@ def lp_fetch(
       - block-private-networks = basic SSRF guard for agent loops
       - http-cache-dir cuts repeat-read cost on same host
     """
-    lp_bin = find_lightpanda()
-    if not lp_bin:
-        return {"ok": False, "product": "wick", "error": "lightpanda_not_found"}
-
     urls = [url] if isinstance(url, str) else list(url)
     if not urls:
         return {"ok": False, "product": "wick", "error": "no_url"}
@@ -416,6 +440,29 @@ def lp_fetch(
     if not cleaned_urls or any(not u for u in cleaned_urls):
         return {"ok": False, "product": "wick", "error": "no_url"}
     urls = cleaned_urls
+    if wick_origins is not None:
+        guarded: list[str] = []
+        for u in urls:
+            err = wick_origins.guard_fetch_url(u)
+            if err:
+                return err
+            if "://" not in u:
+                try:
+                    guarded.append(wick_origins.normalize_agent_url(u))
+                except ValueError as e:
+                    return {"ok": False, "product": "wick", "error": str(e)}
+            else:
+                guarded.append(u)
+        urls = guarded
+    if wick_capability is not None:
+        for u in urls:
+            herr = wick_capability.deny_host(u)
+            if herr:
+                return herr
+
+    lp_bin = find_lightpanda()
+    if not lp_bin:
+        return {"ok": False, "product": "wick", "error": "lightpanda_not_found"}
 
     ensure()
     cmd: list[str] = [str(lp_bin), "fetch", *urls, "--json"]
@@ -694,6 +741,9 @@ def cmd_status(_: argparse.Namespace) -> int:
                     "cdp": f"http://127.0.0.1:{CHROME_PORT}",
                     "pid": read_pid("chromium"),
                 },
+                "profile": wick_capability.current_profile() if wick_capability else "full-act",
+                "allow_hosts": wick_capability.parse_allow_hosts() if wick_capability else [],
+                "block_hosts": wick_capability.parse_block_hosts() if wick_capability else [],
             },
             indent=2,
         )
@@ -1013,6 +1063,8 @@ def cmd_shields(args: argparse.Namespace) -> int:
             "per-session cookie jars",
             "NOT full Brave canvas/WebGL fingerprint farbling (engine limit)",
             "Chromium path: automation hardening flags only — not Camoufox-class stealth",
+            "WebRTC LAN IP guard + Client Hint reduction (privacy, not stealth)",
+            "CAPTCHA: vault login/secrets halt; desktop computer-use may click the widget — no third-party service",
         ],
     }
     if wick_shields:
@@ -1021,6 +1073,62 @@ def cmd_shields(args: argparse.Namespace) -> int:
         info["sessions"] = wick_shields.list_sessions()
     else:
         info["lists"] = "shields module missing"
+    if wick_policy is not None:
+        try:
+            info["policy"] = wick_policy.effective()
+        except Exception as e:
+            info["policy"] = {"ok": False, "error": str(e)}
+    try:
+        import privacy as wick_privacy
+
+        info["privacy"] = wick_privacy.status()
+    except Exception:
+        pass
+    try:
+        import hsm as wick_hsm
+
+        info["hsm"] = wick_hsm.status()
+    except Exception:
+        pass
+    if getattr(args, "policy_check", None):
+        if wick_policy is None:
+            print(json.dumps({"ok": False, "error": "no_policy_module"}))
+            return 1
+        src = Path(args.policy_check).expanduser()
+        try:
+            obj = json.loads(src.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(json.dumps({"ok": False, "error": "bad_policy_file", "detail": str(e), "path": str(src)}))
+            return 1
+        checked = wick_policy.validate(obj)
+        checked["path"] = str(src)
+        print(json.dumps(checked, indent=2 if not getattr(args, "json_only", False) else None))
+        return 0 if checked.get("ok") else 1
+    if getattr(args, "policy_write", None):
+        if wick_policy is None:
+            print(json.dumps({"ok": False, "error": "no_policy_module"}))
+            return 1
+        dest = Path(args.policy_write).expanduser()
+        try:
+            obj = json.loads(sys.stdin.read())
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": "bad_json", "detail": str(e)}))
+            return 1
+        out = wick_policy.write_policy(obj, dest)
+        print(json.dumps(out, indent=2 if not getattr(args, "json_only", False) else None))
+        return 0 if out.get("ok") else 1
+    if getattr(args, "policy", False):
+        if wick_policy is None:
+            print(json.dumps({"ok": False, "error": "no_policy_module"}))
+            return 1
+        shown = {
+            "ok": True,
+            "product": "wick",
+            "policy": wick_policy.effective(),
+            "path": str(wick_policy.policy_path()) if wick_policy.policy_path() else None,
+        }
+        print(json.dumps(shown, indent=2 if not getattr(args, "json_only", False) else None))
+        return 0
     if args.update:
         # re-download lists
         import urllib.request
@@ -1047,47 +1155,76 @@ def cmd_session(args: argparse.Namespace) -> int:
     act = args.action
     name = args.name or "default"
     if act == "list":
-        print(json.dumps({"ok": True, "sessions": wick_shields.list_sessions()}))
+        swept = wick_shields.sweep_sessions()
+        print(json.dumps({"ok": True, "sessions": wick_shields.list_sessions(), "swept": swept.get("dropped") or []}))
         return 0
     if act == "new":
-        d = wick_shields.session_dir(name)
-        print(json.dumps({"ok": True, "created": name, "path": str(d)}))
-        return 0
+        ttl = getattr(args, "ttl", None)
+        out = wick_shields.new_session(
+            name,
+            ephemeral=bool(getattr(args, "ephemeral", False)),
+            ttl=int(ttl) if ttl else None,
+            owner=getattr(args, "owner", None),
+        )
+        out["export"] = f"export WICK_SESSION={out.get('name') or name}"
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     if act == "use":
-        # print export line for shell
         print(json.dumps({"ok": True, "session": name, "export": f"export WICK_SESSION={name}"}))
         return 0
-    if act == "save":
-        print(json.dumps(wick_shields.promote_jar_to_load(name)))
+    if act in ("save", "promote"):
+        print(json.dumps(wick_shields.promote_session(name)))
         return 0
     if act == "path":
         load, jar = wick_shields.session_cookie_paths(name)
         print(json.dumps({"ok": True, "session": name, "load": str(load), "jar": str(jar)}))
         return 0
+    if act == "meta":
+        print(json.dumps({"ok": True, **wick_shields.session_meta(name)}, ensure_ascii=False))
+        return 0
+    if act == "drop":
+        print(json.dumps(wick_shields.drop_session(name, force_default=bool(getattr(args, "force", False)))))
+        return 0
+    if act == "sweep":
+        print(json.dumps(wick_shields.sweep_sessions()))
+        return 0
+    if act == "export":
+        reveal = bool(getattr(args, "reveal", False))
+        out = wick_shields.export_session(name, reveal=reveal)
+        dest = getattr(args, "out", None)
+        if dest and out.get("ok"):
+            written = wick_shields.write_session_export(out, Path(dest))
+            if not written.get("ok"):
+                print(json.dumps(written, ensure_ascii=False))
+                return 1
+            out["path"] = written.get("path")
+            out["mode"] = written.get("mode")
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "import":
+        src = getattr(args, "file", None) or getattr(args, "out", None)
+        if not src:
+            print(json.dumps({"ok": False, "error": "missing_file", "hint": "wick session import NAME --file export.json"}))
+            return 2
+        try:
+            payload = json.loads(Path(src).expanduser().read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(json.dumps({"ok": False, "error": "bad_export", "detail": str(e)}))
+            return 1
+        out = wick_shields.import_session(name, payload)
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown {act}"}))
     return 2
 
 
 def _resolve_act_rest(action: str, rest: list[str]) -> tuple[list[str] | None, dict | None]:
-    """Resolve vault/pass/env refs in fill/select values. Never returns secrets in meta."""
-    if action not in ("fill", "select") or len(rest) < 2:
-        return list(rest), None
-    raw = rest[1]
-    if wick_vault is None or not wick_vault.is_secret_ref(raw):
-        return list(rest), None
-    try:
-        value, meta = wick_vault.resolve_for_fill(raw, reason=f"wick_act_{action}")
-    except ValueError as e:
-        return None, {"ok": False, "error": "vault_resolve_failed", "detail": str(e)[:160], "ref": wick_vault._redact_ref(raw)}
-    out = list(rest)
-    out[1] = value
-    info = {
-        "vault_resolved": True,
-        "ref": meta.get("ref"),
-        "backend": meta.get("backend"),
-        "chars": meta.get("chars"),
-    }
-    return out, info
+    """Pass secret refs through to Chromium so fill is origin-bound to the live page.
+
+    Resolving here would inject the password before we know the page origin
+    (phishing). chrome_actions.py resolves vault:// against page.url.
+    """
+    return list(rest), None
 
 
 def cmd_act(args: argparse.Namespace) -> int:
@@ -1098,6 +1235,10 @@ def cmd_act(args: argparse.Namespace) -> int:
             print(json.dumps(st))
             return 1
     rest = list(args.rest or [])
+    if getattr(args, "expect_url_fragment", None):
+        rest += ["--expect-url-fragment", args.expect_url_fragment]
+    if getattr(args, "expect_element", None):
+        rest += ["--expect-element", args.expect_element]
     resolved, vmeta = _resolve_act_rest(args.action, rest)
     if resolved is None:
         print(json.dumps(vmeta or {"ok": False, "error": "vault_resolve_failed"}))
@@ -1144,6 +1285,30 @@ def cmd_vault(args: argparse.Namespace) -> int:
     if act == "match":
         print(json.dumps(wick_vault.match_url(getattr(args, "url", "") or ""), ensure_ascii=False))
         return 0
+    if act == "unlock":
+        out = wick_vault.unlock(getattr(args, "ttl", None))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "lock":
+        out = wick_vault.lock()
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "grant":
+        url = getattr(args, "url", None) or getattr(args, "name", None) or ""
+        if not url:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_url",
+                        "hint": "wick vault grant --url https://example.com/login [--ttl 120]",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.grant(url, ttl=int(getattr(args, "ttl", None) or 120))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     if act == "set":
         fields = {}
         raw_fields = getattr(args, "field", None) or []
@@ -1163,6 +1328,7 @@ def cmd_vault(args: argparse.Namespace) -> int:
             notes=getattr(args, "notes", None),
             fields=fields or None,
             tags=list(tags) if tags else None,
+            allow_subdomains=bool(getattr(args, "allow_subdomains", False)) or None,
         )
         # Scrub env one-shot after use
         if "WICK_VAULT_SET_PASSWORD" in os.environ:
@@ -1202,8 +1368,49 @@ def cmd_vault(args: argparse.Namespace) -> int:
         out = wick_vault.resolve(ref, reason="cli_resolve_reveal")
         print(json.dumps(out, ensure_ascii=False))
         return 0 if out.get("ok") else 1
+    if act in ("suggest", "autofill"):
+        url = getattr(args, "url", None) or getattr(args, "name", None) or ""
+        if not url:
+            print(json.dumps({"ok": False, "error": "missing_url", "hint": "wick vault suggest --url https://example.com/login"}))
+            return 2
+        elements = None
+        if wick_elements is not None:
+            snap = _gather_snap(url, fast=True, elements_limit=40, link_limit=0)
+            if snap.get("ok"):
+                elements = snap.get("elements") or []
+        out = wick_vault.suggest_login(url, elements=elements)
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act in ("passkey-new", "passkey_new"):
+        name = getattr(args, "name", "") or ""
+        url = getattr(args, "url", None) or ""
+        if not name or not url:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_name_or_url",
+                        "hint": "wick vault passkey-new NAME --url https://example.com/login",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.create_passkey(name, url=url, username=getattr(args, "username", None))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown_vault_action:{act}"}))
     return 2
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    """Human/harness approval token for login/fill/passkey. A page cannot mint this."""
+    if wick_approval is None:
+        print(json.dumps({"ok": False, "error": "approval_module_missing"}))
+        return 1
+    acts = list(getattr(args, "actions", None) or [])
+    out = wick_approval.issue(acts, ttl=getattr(args, "ttl", None))
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -1228,6 +1435,41 @@ def cmd_run(args: argparse.Namespace) -> int:
             results.append({"i": i, "ok": False, "error": "step_not_object"})
             continue
         act = step.get("action") or step.get("op")
+        if act in ("session_new", "session_save", "session_promote", "session_drop", "session_sweep"):
+            if not wick_shields:
+                results.append({"i": i, "action": act, "ok": False, "error": "no_shields_module"})
+                continue
+            sname = step.get("name") or os.environ.get("WICK_SESSION", "default")
+            if act == "session_new":
+                r = wick_shields.new_session(
+                    sname,
+                    ephemeral=bool(step.get("ephemeral")),
+                    ttl=int(step["ttl"]) if step.get("ttl") else None,
+                    owner=step.get("owner"),
+                )
+            elif act in ("session_save", "session_promote"):
+                r = wick_shields.promote_session(sname)
+            elif act == "session_drop":
+                r = wick_shields.drop_session(sname, force_default=bool(step.get("force")))
+            else:
+                r = wick_shields.sweep_sessions()
+            results.append({"i": i, "action": act, "result": r})
+            continue
+        if wick_capability is not None and act in (
+            "goto", "click", "click_xy", "click_n",
+            "dblclick", "doubleclick", "rightclick", "contextclick",
+            "fill", "login", "passkey", "passkey_register", "type", "type_n", "select", "check",
+            "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
+            "eval", "content", "title", "shot", "back", "forward", "reload",
+            "scroll", "scroll_xy", "move", "drag", "hover",
+            "pdf", "screenshot", "tab_new", "tab_list", "tab_switch", "tab_close",
+            "cookies", "dialog", "cu", "computer", "a11y",
+            "download", "get",
+        ):
+            denied = wick_capability.deny("act" if act != "get" else "get", action=act)
+            if denied:
+                results.append({"i": i, "action": act, "result": denied})
+                continue
         if act in ("open", "fetch", "probe", "tree", "links", "snap", "elements"):
             url = step.get("url")
             if act == "open":
@@ -1254,7 +1496,16 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if r.get("ok"):
                     r = {"ok": True, "url": url, "links": extract_md_links(r.get("content") or "")}
             results.append({"i": i, "action": act, "result": r})
-        elif act in ("goto", "click", "fill", "select", "check", "press", "wait", "eval", "content", "title", "shot", "back", "forward", "reload", "scroll", "hover", "pdf", "screenshot", "tab_new", "tab_list", "cookies"):
+        elif act in (
+            "goto", "click", "click_xy", "click_n",
+            "dblclick", "doubleclick", "rightclick", "contextclick",
+            "fill", "login", "passkey", "passkey_register", "type", "type_n", "select", "check",
+            "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
+            "eval", "content", "title", "shot", "back", "forward", "reload",
+            "scroll", "scroll_xy", "move", "drag", "hover",
+            "pdf", "screenshot", "tab_new", "tab_list", "tab_switch", "tab_close",
+            "cookies", "dialog", "cu", "computer", "a11y",
+        ):
             if act == "shot":
                 out = step.get("out") or str(SHOTS / f"run-{i}.png")
                 rc = run_pw("action_shot.py", out, "viewport")
@@ -1265,24 +1516,43 @@ def cmd_run(args: argparse.Namespace) -> int:
                 env = os.environ.copy()
                 env["WICK_CHROME_PORT"] = str(CHROME_PORT)
                 rest = []
+                chrome_act = act
                 if act == "goto":
                     rest = [step["url"]]
                 elif act == "click":
-                    rest = [step["selector"]]
+                    if step.get("n") is not None:
+                        chrome_act = "click_n"
+                        rest = [str(step["n"])]
+                    elif step.get("x") is not None:
+                        chrome_act = "click_xy"
+                        rest = [str(step["x"]), str(step["y"])]
+                    else:
+                        rest = [step["selector"]]
+                elif act in ("click_xy", "move"):
+                    rest = [str(step.get("x")), str(step.get("y"))]
+                elif act == "click_n":
+                    rest = [str(step.get("n"))]
+                elif act in ("dblclick", "doubleclick", "rightclick", "contextclick"):
+                    if step.get("x") is not None:
+                        rest = [str(step["x"]), str(step["y"])]
+                    else:
+                        rest = [step.get("selector") or ""]
                 elif act == "fill":
                     rest = [step["selector"], step.get("text") or step.get("value") or step.get("secret_ref") or ""]
-                    resolved, vmeta = _resolve_act_rest("fill", rest)
-                    if resolved is None:
-                        results.append({"i": i, "action": act, "result": vmeta})
-                        continue
-                    rest = resolved
                 elif act == "select":
                     rest = [step["selector"], step.get("value") or step.get("secret_ref") or ""]
-                    resolved, vmeta = _resolve_act_rest("select", rest)
-                    if resolved is None:
-                        results.append({"i": i, "action": act, "result": vmeta})
-                        continue
-                    rest = resolved
+                elif act == "login":
+                    rest = []
+                    if step.get("url"):
+                        rest.append(step["url"])
+                    if step.get("no_submit") or step.get("submit") is False:
+                        rest.append("--no-submit")
+                elif act in ("passkey", "passkey_register"):
+                    rest = []
+                    if step.get("url"):
+                        rest.append(step["url"])
+                    if step.get("name"):
+                        rest.append(step["name"])
                 elif act == "check":
                     rest = [step["selector"]]
                 elif act == "back":
@@ -1307,16 +1577,40 @@ def cmd_run(args: argparse.Namespace) -> int:
                     rest = []
                 elif act == "cookies":
                     rest = []
-                elif act == "press":
+                elif act in ("press", "key"):
                     rest = [step.get("key") or "Enter"]
+                elif act == "type":
+                    rest = [step.get("text") or step.get("value") or ""]
+                elif act == "type_n":
+                    rest = [str(step.get("n")), step.get("text") or step.get("value") or ""]
                 elif act == "wait":
                     rest = [step["selector"]]
+                elif act == "wait_url":
+                    rest = [step.get("fragment") or step.get("url") or "", str(step.get("timeout") or 30000)]
+                elif act == "wait_text":
+                    rest = [step.get("text") or "", str(step.get("timeout") or 15000)]
+                elif act == "wait_visible":
+                    rest = [step.get("selector") or "", str(step.get("timeout") or 15000)]
+                elif act == "scroll_xy":
+                    rest = [str(step.get("x")), str(step.get("y")), str(step.get("amount") or 400)]
+                elif act == "drag":
+                    rest = [str(step.get("x1")), str(step.get("y1")), str(step.get("x2")), str(step.get("y2"))]
+                elif act == "dialog":
+                    rest = [step.get("mode") or "accept"]
+                    if step.get("text"):
+                        rest.append(str(step["text"]))
+                elif act in ("cu", "computer", "a11y"):
+                    rest = [step["out"]] if step.get("out") else []
+                elif act == "tab_switch":
+                    rest = [str(step.get("index") or 0)]
+                elif act == "tab_close":
+                    rest = [str(step["index"])] if step.get("index") is not None else []
                 elif act == "eval":
                     rest = [step.get("expr") or step.get("js") or "document.title"]
                 elif act == "content":
                     rest = [str(step.get("max") or 8000)]
                 out = subprocess.check_output(
-                    [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), act, *rest],
+                    [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), chrome_act, *rest],
                     env=env,
                     stderr=subprocess.STDOUT,
                 )
@@ -1538,6 +1832,51 @@ def _title_from_tree(tree_text: str) -> str | None:
     return None
 
 
+def _apply_profile(
+    profile: str | None,
+    *,
+    fast: bool,
+    wait_ms: int,
+    max_chars: int,
+    excerpt_len: int,
+    elements_limit: int,
+    link_limit: int,
+    tree_max: int,
+) -> dict:
+    """Merge a named observe profile with call-site budgets."""
+    skip_md = False
+    name = None
+    effective = profile
+    if not effective and wick_snap_profile is not None:
+        env_p = (os.environ.get("WICK_SNAP_PROFILE") or "").strip()
+        if env_p:
+            effective = env_p
+    if wick_snap_profile is not None and effective:
+        p = wick_snap_profile.apply(effective)
+        name = wick_snap_profile.resolve(effective)
+        fast = bool(p["fast"])
+        wait_ms = int(p["wait_ms"])
+        max_chars = int(p["max_chars"])
+        excerpt_len = int(p["excerpt"])
+        elements_limit = int(p["elements"])
+        link_limit = int(p["link_limit"])
+        tree_max = int(p["tree_max"])
+        skip_md = bool(p["skip_markdown"])
+    elif fast:
+        name = "default"
+    return {
+        "fast": fast,
+        "wait_ms": wait_ms,
+        "max_chars": max_chars,
+        "excerpt_len": excerpt_len,
+        "elements_limit": elements_limit,
+        "link_limit": link_limit,
+        "tree_max": tree_max,
+        "skip_markdown": skip_md,
+        "profile": name,
+    }
+
+
 def _gather_snap(
     url: str,
     *,
@@ -1550,44 +1889,98 @@ def _gather_snap(
     wait_ms: int = 2000,
     fast: bool = False,
     no_strip: bool = False,
+    profile: str | None = None,
+    skip_markdown: bool = False,
 ) -> dict:
     """Shared snap gather for snap/plan/ask (no print)."""
+    budgets = _apply_profile(
+        profile,
+        fast=fast,
+        wait_ms=wait_ms,
+        max_chars=max_chars,
+        excerpt_len=excerpt_len,
+        elements_limit=elements_limit,
+        link_limit=link_limit,
+        tree_max=tree_max,
+    )
+    fast = bool(budgets["fast"])
+    wait_ms = int(budgets["wait_ms"])
+    max_chars = int(budgets["max_chars"])
+    excerpt_len = int(budgets["excerpt_len"])
+    elements_limit = int(budgets["elements_limit"])
+    link_limit = int(budgets["link_limit"])
+    tree_max = int(budgets["tree_max"])
+    skip_markdown = bool(skip_markdown or budgets["skip_markdown"])
+    prof = budgets.get("profile")
+
     strips = _observe_strip(no_strip=no_strip)
     wait = 1200 if fast else wait_ms
+    if prof == "micro":
+        wait = min(wait, 800)
     wu = "domcontentloaded" if fast else (wait_until or "load")
     md_max = min(max_chars, 8000) if fast else max_chars
     tree_cap = min(tree_max, 40000) if fast else tree_max
 
-    # Tree first in fast mode: elements + title without waiting on full markdown.
-    tree_r = lp_fetch(
-        url,
-        dump="semantic_tree_text",
-        max_chars=tree_cap,
-        wait_until=wu,
-        wait_ms=wait,
-        strip=strips,
-    )
-    elements = []
-    tree_title = None
-    if tree_r.get("ok") and wick_elements is not None:
-        tree_text = tree_r.get("content") or ""
+    cache_key = None
+    if wick_observe_cache is not None:
+        cache_key = wick_observe_cache.cache_key(
+            url=url,
+            fast=bool(fast),
+            wait_ms=wait,
+            session=os.environ.get("WICK_SESSION", "default"),
+            mode="snap",
+            profile=str(prof or ""),
+        )
+        hit = wick_observe_cache.get(cache_key)
+        if hit and hit.get("ok"):
+            hit["cache"] = True
+            timing = dict(hit.get("timing") or {})
+            timing["cache"] = True
+            hit["timing"] = timing
+            return hit
+
+    t0 = time.time()
+    fetch_kw = dict(wait_until=wu, wait_ms=wait, strip=strips)
+
+    def _tree():
+        return lp_fetch(url, dump="semantic_tree_text", max_chars=tree_cap, **fetch_kw)
+
+    def _md():
+        return lp_fetch(url, dump="markdown", max_chars=md_max or 4000, **fetch_kw)
+
+    if skip_markdown:
+        tree_r = _tree()
+        if not tree_r.get("ok"):
+            return tree_r
+        md = {
+            "ok": True,
+            "content": "",
+            "ms": 0,
+            "chars": 0,
+            "url": tree_r.get("url") or url,
+            "http_ok": tree_r.get("http_ok"),
+            "http_status": tree_r.get("http_status"),
+        }
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            ft = pool.submit(_tree)
+            fm = pool.submit(_md)
+            tree_r = ft.result()
+            md = fm.result()
+    tree_text = (tree_r.get("content") or "") if tree_r.get("ok") else ""
+    tree_title = _title_from_tree(tree_text)
+    if wick_elements is not None and tree_text:
         elements = wick_elements.interactive_only(
             wick_elements.parse_tree_text(tree_text),
             limit=elements_limit,
         )
-        tree_title = _title_from_tree(tree_text)
-
-    md = lp_fetch(
-        url,
-        dump="markdown",
-        max_chars=md_max,
-        wait_until=wu,
-        wait_ms=wait,
-        strip=strips,
-    )
+    else:
+        elements = []
     if not md.get("ok"):
         if tree_r.get("ok"):
-            return {
+            tree_only = {
                 "ok": True,
                 "product": "wick",
                 "version": VERSION,
@@ -1608,7 +2001,19 @@ def _gather_snap(
                 "fast": bool(fast),
                 "strip": strips,
                 "tree_only": True,
+                "profile": prof,
+                "timing": {
+                    "total_ms": int((time.time() - t0) * 1000),
+                    "tree_ms": tree_r.get("ms") or 0,
+                    "md_ms": 0,
+                    "cache": False,
+                    "profile": prof,
+                    "parallel": False,
+                },
             }
+            if wick_observe_cache is not None and cache_key:
+                wick_observe_cache.put(cache_key, tree_only)
+            return tree_only
         return md
 
     text = md.get("content") or ""
@@ -1620,7 +2025,7 @@ def _gather_snap(
             if s.startswith("# "):
                 title = s[2:].strip()
                 break
-    return {
+    gathered = {
         "ok": True,
         "product": "wick",
         "version": VERSION,
@@ -1640,7 +2045,29 @@ def _gather_snap(
         "tree_chars": tree_r.get("chars"),
         "fast": bool(fast),
         "strip": strips,
+        "profile": prof,
+        "timing": {
+            "total_ms": int((time.time() - t0) * 1000),
+            "tree_ms": tree_r.get("ms") or 0,
+            "md_ms": md.get("ms") or 0,
+            "cache": False,
+            "profile": prof,
+            "parallel": not skip_markdown,
+        },
     }
+    if skip_markdown:
+        gathered["tree_only"] = True
+        excerpt_bits = [tree_title or ""] + [
+            str(e.get("name") or "") for e in elements[:8]
+        ]
+        gathered["excerpt"] = re.sub(r"\s+", " ", " · ".join(x for x in excerpt_bits if x)).strip()[:excerpt_len]
+        gathered["markdown"] = ""
+        gathered["link_count"] = 0
+        gathered["links"] = []
+        gathered["links_all"] = []
+    if wick_observe_cache is not None and cache_key:
+        wick_observe_cache.put(cache_key, gathered)
+    return gathered
 
 
 def _annotate_observe(out: dict) -> dict:
@@ -1672,6 +2099,7 @@ def snap_payload(
     fast: bool = False,
     no_strip: bool = False,
     full: bool = False,
+    profile: str | None = None,
 ) -> dict:
     snap = _gather_snap(
         url,
@@ -1684,6 +2112,7 @@ def snap_payload(
         wait_ms=wait_ms,
         fast=fast,
         no_strip=no_strip,
+        profile=profile,
     )
     if not snap.get("ok"):
         return snap
@@ -1696,6 +2125,57 @@ def snap_payload(
         out.pop("markdown", None)
     out.pop("links_all", None)
     return _annotate_observe(out)
+
+
+def snap_many_payload(
+    urls: list[str],
+    *,
+    profile: str = "micro",
+    concurrency: int = 4,
+    fast: bool = True,
+) -> dict:
+    """Bounded-concurrency observe for agent planners."""
+    cleaned = [str(u).strip() for u in urls if str(u).strip()]
+    if not cleaned:
+        return {"ok": False, "product": "wick", "error": "no_url"}
+    conc = max(1, min(int(concurrency or 4), 8))
+    from concurrent.futures import ThreadPoolExecutor
+
+    results: list[dict] = [{} for _ in cleaned]
+
+    def _one(i: int, u: str) -> tuple[int, dict]:
+        return i, snap_payload(u, profile=profile, fast=fast)
+
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=conc) as pool:
+        futs = [pool.submit(_one, i, u) for i, u in enumerate(cleaned)]
+        for f in futs:
+            i, r = f.result()
+            results[i] = r
+    ok = all(r.get("ok") for r in results)
+    return {
+        "ok": ok,
+        "product": "wick",
+        "version": VERSION,
+        "mode": "agent_snap_many",
+        "count": len(results),
+        "profile": profile,
+        "concurrency": conc,
+        "ms": int((time.time() - t0) * 1000),
+        "results": results,
+        "untrusted_content": True,
+    }
+
+
+def cmd_snap_many(args: argparse.Namespace) -> int:
+    """Bounded-concurrency observe for agent planners."""
+    out = snap_many_payload(
+        list(getattr(args, "urls", None) or []),
+        profile=getattr(args, "profile", None) or "micro",
+        concurrency=int(getattr(args, "concurrency", 4) or 4),
+    )
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
 
 
 def cmd_snap(args: argparse.Namespace) -> int:
@@ -1712,6 +2192,7 @@ def cmd_snap(args: argparse.Namespace) -> int:
         fast=bool(args.fast),
         no_strip=bool(args.no_strip),
         full=bool(args.full),
+        profile=getattr(args, "profile", None),
     )
     if not out.get("ok"):
         print(json.dumps(out, ensure_ascii=False))
@@ -1736,6 +2217,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         wait_ms=args.wait_ms,
         fast=bool(args.fast),
         no_strip=bool(args.no_strip),
+        profile=getattr(args, "profile", None),
     )
     if not snap.get("ok"):
         print(json.dumps(snap, ensure_ascii=False))
@@ -1790,6 +2272,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         wait_ms=args.wait_ms,
         fast=bool(args.fast),
         no_strip=bool(args.no_strip),
+        profile=getattr(args, "profile", None),
     )
     if not snap.get("ok"):
         print(json.dumps(snap, ensure_ascii=False))
@@ -1888,9 +2371,10 @@ def _rpc_handlers() -> dict:
           tree_max=int(args.get("tree_max") or 60000),
           wait_until=args.get("wait_until") or "load",
           wait_ms=int(args.get("wait_ms") or 2000),
-          fast=bool(args.get("fast")),
+          fast=bool(args.get("fast") if "fast" in args else True),
           no_strip=bool(args.get("no_strip")),
           full=bool(args.get("full")),
+          profile=args.get("profile"),
       )
 
   def _plan(args: dict) -> dict:
@@ -1903,8 +2387,9 @@ def _rpc_handlers() -> dict:
           tree_max=int(args.get("tree_max") or 60000),
           wait_until=args.get("wait_until") or "load",
           wait_ms=int(args.get("wait_ms") or 2000),
-          fast=bool(args.get("fast")),
+          fast=bool(args.get("fast") if "fast" in args else True),
           no_strip=bool(args.get("no_strip")),
+          profile=args.get("profile"),
       )
       if not snap.get("ok"):
           return snap
@@ -1945,8 +2430,9 @@ def _rpc_handlers() -> dict:
           tree_max=int(args.get("tree_max") or 60000),
           wait_until=args.get("wait_until") or "load",
           wait_ms=int(args.get("wait_ms") or 2000),
-          fast=bool(args.get("fast")),
+          fast=bool(args.get("fast") if "fast" in args else True),
           no_strip=bool(args.get("no_strip")),
+          profile=args.get("profile"),
       )
       if not snap.get("ok"):
           return snap
@@ -2021,7 +2507,15 @@ def _rpc_handlers() -> dict:
       action = args.get("action")
       if not action:
           return {"ok": False, "error": "missing_action"}
+      if wick_capability is not None:
+          denied = wick_capability.deny("act", action=str(action))
+          if denied:
+              return denied
       rest = [str(x) for x in (args.get("rest") or [])]
+      if args.get("expect_url_fragment"):
+          rest += ["--expect-url-fragment", str(args["expect_url_fragment"])]
+      if args.get("expect_element"):
+          rest += ["--expect-element", str(args["expect_element"])]
       resolved, vmeta = _resolve_act_rest(str(action), rest)
       if resolved is None:
           return vmeta or {"ok": False, "error": "vault_resolve_failed"}
@@ -2053,6 +2547,10 @@ def _rpc_handlers() -> dict:
       if wick_vault is None:
           return {"ok": False, "error": "vault_module_missing"}
       act = args.get("action") or "status"
+      if wick_capability is not None:
+          denied = wick_capability.deny("vault", vault_action=str(act))
+          if denied:
+              return denied
       if act in ("status", "backends"):
           return wick_vault.status()
       if act == "doctor":
@@ -2061,8 +2559,33 @@ def _rpc_handlers() -> dict:
           return wick_vault.list_entries()
       if act == "match":
           return wick_vault.match_url(args.get("url") or "")
+      if act in ("suggest", "autofill"):
+          url = args.get("url") or ""
+          if not url:
+              return {"ok": False, "error": "missing_url"}
+          elements = None
+          if wick_elements is not None:
+              snap = _gather_snap(url, fast=True, elements_limit=40, link_limit=0)
+              if snap.get("ok"):
+                  elements = snap.get("elements") or []
+          return wick_vault.suggest_login(url, elements=elements)
       if act == "init":
           return wick_vault.ensure_local_key(rotate=bool(args.get("rotate")))
+      if act == "unlock":
+          return wick_vault.unlock(args.get("ttl"))
+      if act == "lock":
+          return wick_vault.lock()
+      if act == "grant":
+          url = args.get("url") or ""
+          if not url:
+              return {"ok": False, "error": "missing_url"}
+          return wick_vault.grant(url, ttl=int(args.get("ttl") or 120))
+      if act in ("passkey-new", "passkey_new"):
+          name = args.get("name") or ""
+          url = args.get("url") or ""
+          if not name or not url:
+              return {"ok": False, "error": "missing_name_or_url"}
+          return wick_vault.create_passkey(name, url=url, username=args.get("username"))
       return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
 
   def _session(args: dict) -> dict:
@@ -2070,24 +2593,62 @@ def _rpc_handlers() -> dict:
           return {"ok": False, "error": "no_shields_module"}
       act = args.get("action") or "list"
       name = args.get("name") or "default"
+      if wick_capability is not None:
+          sa = "export-reveal" if act == "export" and args.get("reveal") else str(act)
+          denied = wick_capability.deny("session", session_action=sa)
+          if denied:
+              return denied
       if act == "list":
-          return {"ok": True, "sessions": wick_shields.list_sessions()}
+          swept = wick_shields.sweep_sessions()
+          return {"ok": True, "sessions": wick_shields.list_sessions(), "swept": swept.get("dropped") or []}
       if act == "new":
-          d = wick_shields.session_dir(name)
-          return {"ok": True, "created": name, "path": str(d)}
+          out = wick_shields.new_session(
+              name,
+              ephemeral=bool(args.get("ephemeral")),
+              ttl=int(args["ttl"]) if args.get("ttl") else None,
+              owner=args.get("owner"),
+          )
+          out["export"] = f"export WICK_SESSION={out.get('name') or name}"
+          return out
       if act == "use":
           return {"ok": True, "session": name, "export": f"export WICK_SESSION={name}"}
-      if act == "save":
-          return wick_shields.promote_jar_to_load(name)
+      if act in ("save", "promote"):
+          return wick_shields.promote_session(name)
       if act == "path":
           load, jar = wick_shields.session_cookie_paths(name)
           return {"ok": True, "session": name, "load": str(load), "jar": str(jar)}
+      if act == "meta":
+          return {"ok": True, **wick_shields.session_meta(name)}
+      if act == "drop":
+          return wick_shields.drop_session(name, force_default=bool(args.get("force")))
+      if act == "sweep":
+          return wick_shields.sweep_sessions()
+      if act == "export":
+          return wick_shields.export_session(name, reveal=bool(args.get("reveal")))
+      if act == "import":
+          payload = args.get("data") or args.get("payload")
+          if payload is None and args.get("file"):
+              try:
+                  payload = json.loads(Path(str(args["file"])).expanduser().read_text(encoding="utf-8"))
+              except (OSError, ValueError) as e:
+                  return {"ok": False, "error": "bad_export", "detail": str(e)}
+          return wick_shields.import_session(name, payload)
       return {"ok": False, "soft": True, "error": f"unknown_session_action:{act}"}
 
   def _tools(_args: dict) -> dict:
       if wick_tools_schema is None:
           return {"ok": False, "error": "tools_schema_missing"}
       return wick_tools_schema.tools_export(VERSION)
+
+  def _snap_many(args: dict) -> dict:
+      urls = args.get("urls")
+      if not isinstance(urls, list) or not urls:
+          return {"ok": False, "error": "urls[] required"}
+      return snap_many_payload(
+          [str(u) for u in urls],
+          profile=str(args.get("profile") or "micro"),
+          concurrency=int(args.get("concurrency") or 4),
+      )
 
   def _version(_args: dict) -> dict:
       return {"ok": True, "product": "wick", "version": VERSION}
@@ -2112,6 +2673,8 @@ def _rpc_handlers() -> dict:
       "act": _act,
       "vault": _vault,
       "session": _session,
+      "snap_many": _snap_many,
+      "snap-many": _snap_many,
       "tools": _tools,
       "version": _version,
       "status": _status,
@@ -2140,6 +2703,18 @@ def cmd_rpc(args: argparse.Namespace) -> int:
         print(json.dumps(resp, ensure_ascii=False))
         return 0 if resp.get("ok") else 1
     return wick_rpc.run_stdio_loop(handlers)
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """MCP stdio server for Hermes, Claude Desktop, Cursor, and other MCP clients."""
+    if wick_mcp is None:
+        print(json.dumps({"ok": False, "error": "mcp_module_missing"}))
+        return 1
+    return wick_mcp.run_stdio(
+        _rpc_handlers(),
+        version=VERSION,
+        once=getattr(args, "once", None),
+    )
 
 
 def cmd_goto(a: argparse.Namespace) -> int:
@@ -2236,6 +2811,15 @@ def _add_json_only(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_observe_profile(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--profile",
+        choices=["micro", "default", "full"],
+        default=None,
+        help="observe budget: micro=tree only, default=fast excerpt, full=longer wait",
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="wick",
@@ -2313,6 +2897,9 @@ def main() -> int:
 
     p = sub.add_parser("shields", help="Brave-inspired shields status (lists, sessions, honest scope)")
     p.add_argument("--update", action="store_true", help="re-download EasyList/EasyPrivacy")
+    p.add_argument("--policy", action="store_true", help="show effective policy overlay (file + env)")
+    p.add_argument("--policy-check", metavar="FILE", help="validate a policy JSON file")
+    p.add_argument("--policy-write", metavar="FILE", help="write validated policy JSON from stdin to FILE (0600)")
     _add_json_only(p)
 
     p = sub.add_parser("shields-bench", help="A/B request counts shields on vs off")
@@ -2343,9 +2930,16 @@ def main() -> int:
     p.add_argument("--index", type=int, help="for switch/close")
     _add_json_only(p)
 
-    p = sub.add_parser("session", help="Cookie session isolation (Browser-Use-like persistence)")
-    p.add_argument("action", choices=["list", "new", "use", "save", "path"])
+    p = sub.add_parser("session", help="Cookie session isolation (ephemeral-by-choice, promote to keep)")
+    p.add_argument("action", choices=["list", "new", "use", "save", "promote", "path", "meta", "drop", "sweep", "export", "import"])
     p.add_argument("name", nargs="?", default="default")
+    p.add_argument("--ephemeral", action="store_true", help="with new: auto-sweep unless promoted")
+    p.add_argument("--ttl", type=int, help="with new --ephemeral: lifetime in seconds")
+    p.add_argument("--owner", help="with new: agent/owner tag")
+    p.add_argument("--force", action="store_true", help="with drop: allow deleting the default session")
+    p.add_argument("--reveal", action="store_true", help="with export: include cookie values (full-act, 0600)")
+    p.add_argument("--out", help="with export: write JSON to this path")
+    p.add_argument("--file", help="with import: path to a revealed session export")
     _add_json_only(p)
 
     p = sub.add_parser(
@@ -2356,7 +2950,11 @@ def main() -> int:
         "vault_action",
         nargs="?",
         default="status",
-        choices=["status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen", "resolve"],
+        choices=[
+            "status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen",
+            "resolve", "suggest", "autofill", "lock", "unlock", "grant",
+            "passkey-new", "passkey_new",
+        ],
     )
     p.add_argument("name", nargs="?", help="entry name (set/get/rm) or ignored")
     p.add_argument("--password", help="password value for set (prefer env WICK_VAULT_SET_PASSWORD)")
@@ -2369,11 +2967,31 @@ def main() -> int:
     p.add_argument("--ref", help="secret ref for resolve (vault://… pass://… env://…)")
     p.add_argument("--length", type=int, default=24, help="password length for gen")
     p.add_argument("--rotate", action="store_true", help="with init: rotate master key (destroys old store usability)")
+    p.add_argument("--ttl", type=int, help="seconds for unlock (default 900) or grant (default 120)")
+    p.add_argument("--allow-subdomains", action="store_true", help="with set: allow app.example.com to use an example.com entry")
     _add_json_only(p)
 
-    p = sub.add_parser("act", help="Chromium interactive action (goto/click/fill/press/wait/eval/content)")
-    p.add_argument("action", choices=["goto", "click", "fill", "select", "check", "press", "wait", "wait_url", "eval", "content", "title", "back", "forward", "reload", "scroll", "hover", "tab_new", "tab_list", "tab_switch", "tab_close", "pdf", "screenshot", "download", "cookies"])
-    p.add_argument("rest", nargs="*", help="action args (selector, text|secret-ref, url, ...)")
+    p = sub.add_parser("approve", help="Human/harness token for login/fill/passkey (not mintable from a page)")
+    p.add_argument("actions", nargs="+", help="login, fill, passkey, passkey_register, eval, download")
+    p.add_argument("--ttl", type=int, default=300, help="seconds the file token lasts (default 300)")
+    _add_json_only(p)
+
+    p = sub.add_parser("act", help="Chromium action (goto/click/cu/click_xy/type/login/passkey/…)")
+    p.add_argument("action", choices=[
+        "goto", "click", "click_xy", "click_n",
+        "dblclick", "doubleclick", "rightclick", "contextclick",
+        "fill", "login", "passkey", "passkey_register", "type", "type_n", "select", "check",
+        "press", "key", "wait", "wait_url", "wait_text", "wait_visible",
+        "eval", "content", "title", "back", "forward", "reload",
+        "scroll", "scroll_xy", "move", "drag", "hover",
+        "tab_new", "tab_list", "tab_switch", "tab_close",
+        "pdf", "screenshot", "download", "cookies",
+        "dialog", "cu", "computer", "a11y",
+    ])
+    p.add_argument("rest", nargs="*",
+        help="URL / selector / value / x y (click_xy) / n (click_n) / text (type)")
+    p.add_argument("--expect-url-fragment", help="fail the act unless the page URL contains this fragment")
+    p.add_argument("--expect-element", help="fail the act unless this selector is visible")
     _add_json_only(p)
 
     p = sub.add_parser("run", help="Run JSON playbook of open/fetch/click/... steps")
@@ -2396,6 +3014,7 @@ def main() -> int:
     p.add_argument("--full", action="store_true", help="include full markdown body")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("observe", help="Alias for snap (agent observe snapshot)")
@@ -2411,6 +3030,13 @@ def main() -> int:
     p.add_argument("--full", action="store_true", help="include full markdown body")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
+    _add_json_only(p)
+
+    p = sub.add_parser("snap-many", help="Parallel situation reports (default profile=micro)")
+    p.add_argument("urls", nargs="+")
+    p.add_argument("--concurrency", type=int, default=4)
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("elements", help="Interactive element list for agent clicks")
@@ -2435,6 +3061,7 @@ def main() -> int:
     p.add_argument("--fast", action="store_true", help="domcontentloaded + 1200ms wait")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("ask", help="Snap + fuzzy filter links/elements by query (no LLM)")
@@ -2450,6 +3077,7 @@ def main() -> int:
     p.add_argument("--fast", action="store_true")
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
     _add_json_only(p)
 
     p = sub.add_parser("probe", help="Compact agent brief: status, title, links, excerpt")
@@ -2494,10 +3122,41 @@ def main() -> int:
     p.add_argument("--once", help="process one JSON line (for tests)")
     _add_json_only(p)
 
+    p = sub.add_parser("mcp", help="MCP stdio server (Hermes, Claude Desktop, Cursor)")
+    p.add_argument("--once", help="One JSON-RPC request instead of stdin loop (tests)")
+    _add_json_only(p)
+
     sub.add_parser("prune")
     sub.add_parser("install-engine", help="Download free Lightpanda nightly (optional backend)")
 
     args = ap.parse_args()
+    if wick_capability is not None:
+        session_action = getattr(args, "action", None) if args.cmd == "session" else None
+        if session_action == "export" and getattr(args, "reveal", False):
+            session_action = "export-reveal"
+        denied = wick_capability.deny(
+            args.cmd,
+            action=getattr(args, "action", None) if args.cmd in ("act", "tabs") else None,
+            vault_action=getattr(args, "vault_action", None) if args.cmd == "vault" else None,
+            session_action=session_action,
+        )
+        if denied:
+            print(json.dumps(denied, ensure_ascii=False))
+            return 1
+    if wick_shields is not None and os.environ.get("WICK_SESSION_AUTO_DROP", "0") == "1":
+        import atexit
+
+        sess = os.environ.get("WICK_SESSION", "default")
+
+        def _autodrop(name: str = sess) -> None:
+            try:
+                meta = wick_shields.session_meta(name)
+                if meta.get("ephemeral") and not meta.get("promoted"):
+                    wick_shields.drop_session(name, force_default=True)
+            except Exception:
+                pass
+
+        atexit.register(_autodrop)
     return {
         "version": cmd_version,
         "doctor": cmd_doctor,
@@ -2519,14 +3178,17 @@ def main() -> int:
         "tabs": cmd_tabs,
         "session": cmd_session,
         "vault": cmd_vault,
+        "approve": cmd_approve,
         "act": cmd_act,
         "run": cmd_run,
         "probe": cmd_probe,
         "snap": cmd_snap,
         "observe": cmd_snap,
+        "snap-many": cmd_snap_many,
         "elements": cmd_elements,
         "tools": cmd_tools,
         "rpc": cmd_rpc,
+        "mcp": cmd_mcp,
         "plan": cmd_plan,
         "ask": cmd_ask,
         "xexam": cmd_xexam,

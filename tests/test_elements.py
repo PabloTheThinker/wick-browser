@@ -2,6 +2,7 @@
 """Unit tests for lib/elements.py (semantic tree parsing + fuzzy ask helpers)."""
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -85,6 +86,44 @@ class TestPlanSuggestions(unittest.TestCase):
         self.assertIn("screenshot", actions)
         clicks = [s for s in plan if s["action"] == "click"]
         self.assertTrue(any("role=link" in (s.get("hint") or "") for s in clicks))
+
+    def test_plan_suggests_login_when_password_form(self):
+        tree = "1 document\n  2 textbox 'Email'\n  3 textbox 'Password'\n  4 [i] button 'Log in'\n"
+        els = elements.parse_tree_text(tree)
+        plan = elements.plan_suggestions(
+            url="https://example.com/login",
+            title="Sign in",
+            excerpt="Sign in to your account",
+            links=[],
+            elements=els,
+            click_limit=2,
+        )
+        actions = {s["action"] for s in plan}
+        self.assertIn("login", actions)
+        login = next(s for s in plan if s["action"] == "login")
+        self.assertIn("wick act login", login["cmd"])
+        self.assertIn("wick vault suggest", login.get("why", "") + login["cmd"])
+
+    def test_plan_prefers_computer_use_when_challenge_present(self):
+        os.environ["WICK_CHALLENGE_COMPUTER_USE"] = "1"
+        try:
+            tree = "1 document\n  2 textbox 'Email'\n  3 textbox 'Password'\n  4 [i] button 'Log in'\n"
+            els = elements.parse_tree_text(tree)
+            plan = elements.plan_suggestions(
+                url="https://example.com/login",
+                title="Sign in",
+                excerpt='<div class="cf-turnstile"></div> Sign in',
+                links=[],
+                elements=els,
+                click_limit=2,
+            )
+            actions = [s["action"] for s in plan]
+            self.assertEqual(actions[0], "cu")
+            self.assertNotIn("login", set(actions))
+            why = (plan[0].get("why") or "").lower()
+            self.assertTrue("computer-use" in why or "computer use" in why)
+        finally:
+            os.environ.pop("WICK_CHALLENGE_COMPUTER_USE", None)
 
 
 if __name__ == "__main__":
