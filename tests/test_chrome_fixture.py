@@ -153,6 +153,19 @@ class TestChromeFixture(unittest.TestCase):
         waited = self._run("wait_text", "Welcome Ada")
         self.assertTrue(waited.get("ok"), waited)
 
+    def test_observe_article_skips_chrome(self):
+        url = f"http://127.0.0.1:{self.port}/article.html"
+        out = self._run("observe", url, "markdown", "8000", "80")
+        self.assertTrue(out.get("ok"), out)
+        excerpt = out.get("excerpt") or ""
+        self.assertIn("RFC 2606", excerpt)
+        self.assertNotIn("Accept all cookies", excerpt)
+        texts = " ".join(str(h.get("text") or "") for h in (out.get("headings") or []))
+        self.assertIn("Example Domains", texts)
+        self.assertEqual(out.get("kind"), "article")
+        paras = out.get("paragraphs") or []
+        self.assertTrue(any("structured read" in p.lower() for p in paras), paras)
+
     def test_observe_prefers_main_search_results(self):
         shop = f"http://127.0.0.1:{self.port}/search-results.html"
         out = self._run("observe", shop, "markdown", "4000", "200")

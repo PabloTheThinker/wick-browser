@@ -50,7 +50,7 @@ class TestMcpProtocol(unittest.TestCase):
             version="0.9.0",
         )
         names = {t["name"] for t in resp["result"]["tools"]}
-        for n in ("snap", "plan", "ask", "act", "session", "vault", "snap_many", "challenge", "skill"):
+        for n in ("snap", "plan", "ask", "act", "session", "vault", "snap_many", "challenge", "skill", "read"):
             self.assertIn(n, names)
         snap = next(t for t in resp["result"]["tools"] if t["name"] == "snap")
         self.assertIn("url", snap["inputSchema"]["properties"])

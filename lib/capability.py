@@ -96,6 +96,7 @@ _OBSERVE_CMDS = frozenset(
         "prune",
         "install-engine",
         "skill",
+        "read",
     }
 )
 _SAFE_CMDS = _OBSERVE_CMDS | frozenset(

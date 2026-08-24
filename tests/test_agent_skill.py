@@ -38,6 +38,7 @@ def test_skill_payload_shape():
     assert "chromium" in out["purpose"].lower()
     assert isinstance(out["loop"], list) and len(out["loop"]) >= 3
     assert any("snap" in step.lower() for step in out["loop"])
+    assert any("read" in step.lower() for step in out["loop"])
     assert any("here" in step.lower() or "omit" in step.lower() for step in out["loop"])
     rules = " ".join(out["rules"]).lower()
     assert "untrusted" in rules

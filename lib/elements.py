@@ -175,6 +175,8 @@ def plan_suggestions(
     links: list[dict[str, Any]],
     elements: list[dict[str, Any]],
     click_limit: int = 3,
+    kind: str | None = None,
+    headings: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Goal-agnostic next-step hints for agents (built from snap data)."""
     out: list[dict[str, Any]] = []
@@ -218,12 +220,19 @@ def plan_suggestions(
                 f"(also: wick vault suggest --url {url!r})"
             ),
         })
+    read_cmd = "wick read" if not url else f"wick read {url!r}"
+    if (kind or "") == "article" or (headings and excerpt):
+        out.append({
+            "action": "read",
+            "cmd": read_cmd,
+            "why": "structured page read (kind, headings, paragraphs) — prefer this over a markdown dump",
+        })
     out.append({
         "action": "open",
         "cmd": f"wick open {url!r} --max 8000",
-        "why": "read full markdown body",
+        "why": "full markdown dump when the structured read is not enough",
     })
-    if excerpt and len(excerpt) < 400:
+    if excerpt and len(excerpt) < 400 and (kind or "") != "article":
         out.append({
             "action": "open",
             "cmd": f"wick open {url!r}",

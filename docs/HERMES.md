@@ -53,7 +53,7 @@ For a login job, start a **separate** Hermes turn (or raise the process to `full
 ### Loop Hermes should follow
 
 0. **`skill`** `{}` once — purpose, loop, rules.
-1. **`snap`** `{url, profile: "micro"}` — title, interactive elements, `role=` hints. Cheap Chromium observe. After any `act`, snap again with **no url** (`here`) so Wick skips goto.
+1. **`snap`** `{url, profile: "micro"}` — kind, title, headings, interactive elements, `role=` hints. Cheap Chromium observe. After any `act`, snap again with **no url** (`here`) so Wick skips goto. Need the prose? **`read`** `{}` (structured body). Prefer that over `open`.
 2. If the excerpt is not enough, **`ask`** `{q: "terms"}` or **`plan`** `{}` (same observe cache, ~8s TTL; cleared after a successful act).
 3. Need the long read? **`open`** `{url, fast: true}`.
 4. Must click? **`act`** `{action: "click", rest: ["role=link[name=\"More information\"]"]}` using **this** snap's hint. Search: fill the searchbox, then `{action: "press", rest: ["Enter"]}`. Do not click a generic Go.
@@ -144,7 +144,7 @@ Env: `WICK_SNAP_PROFILE=micro` when `--profile` is omitted.
 
 ## MCP tools (short names)
 
-`skill`, `snap`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`.
+`skill`, `snap`, `read`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`.
 
 Aliases `wick_snap` … still resolve so mixed harnesses do not break.
 

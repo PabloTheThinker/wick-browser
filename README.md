@@ -9,6 +9,7 @@ Not a human browser with a side door for bots — a tool built so **agents** can
 ```bash
 wick skill                                             # purpose + loop + rules (harness start)
 wick snap https://example.com/ --profile micro         # cheapest observe (tree only)
+wick read                                              # structured body after snap
 wick plan https://example.com/ --fast                  # suggested next actions (cmd + why)
 wick ask  https://example.com/ --q "more information"  # filter targets by query — no LLM
 wick act  click 'role=link[name="More information"]'   # act: hints resolve directly

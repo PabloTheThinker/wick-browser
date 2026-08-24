@@ -6,11 +6,12 @@ Load **`wick skill`** (or MCP `skill` / `wick_skill`) once at harness start — 
 
 ## Recommended loop: snap → plan → ask → act
 
-1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) via Chromium (`engine: chromium`). After `act`, omit the URL (`wick snap` / `wick snap --here`) so Wick reuses the current tab instead of re-goto.
-2. **`wick plan [URL] --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
-3. **`wick ask [URL] --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
-4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Use **this** snap's `elements[].hint`. Search: fill the searchbox hint, then `wick act press Enter` (do not click a generic Go). After a click that navigates: `wait_url`, then `wick snap` with no URL. Computer-use is last resort: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON). After a challenge widget: `wick act login URL --after-challenge` waits until it is gone, then fills.
-5. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
+1. **`wick snap URL --fast`** — situation report (`kind`, title, excerpt, headings, links, interactive elements) via Chromium. After `act`, omit the URL (`wick snap` / `wick snap --here`) so Wick reuses the current tab instead of re-goto.
+2. **`wick read [URL]`** — structured body (headings + paragraphs). Use this when the excerpt is not enough. Prefer it over `wick open` (the long markdown dump).
+3. **`wick plan [URL] --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
+4. **`wick ask [URL] --q "terms"`** — filter links/elements/excerpt/headings by query words (substring match, no LLM) 
+5. **`wick act …`** — Chromium when you must click, type, wait, PDF. Use **this** snap's `elements[].hint`. Search: fill the searchbox hint, then `wick act press Enter` (do not click a generic Go). After a click that navigates: `wait_url`, then `wick snap` with no URL. Computer-use is last resort: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON). After a challenge widget: `wick act login URL --after-challenge` waits until it is gone, then fills.
+6. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
 
 Still available when you need them: `wick elements URL` (dense target list) and `wick open URL --fast` (full markdown, the long read). **`wick observe`** is an alias for **`wick snap`**.
 
@@ -49,7 +50,7 @@ wick rpc stdio      # one JSON line in, one JSON object out
 {"id": 1, "ok": true, "title": "Example Domain", "untrusted_content": true, ...}
 ```
 
-Known RPC commands: `skill`, `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
+Known RPC commands: `skill`, `snap`, `read`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
 
 ## Untrusted content (observe outputs)
 

@@ -65,11 +65,29 @@ WICK_TOOLS: list[dict[str, Any]] = [
         {"type": "object", "properties": {}},
     ),
     _fn(
+        "wick_read",
+        (
+            "Structured page read: kind, headings, and paragraphs. "
+            "Use after snap when you need the prose — not a full markdown dump. "
+            "Omit url after act to read the current tab."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "url": URL_PROP,
+                "here": HERE_PROP,
+                "profile": PROFILE_PROP,
+                "fast": FAST_PROP,
+                "fail_http": FAIL_HTTP_PROP,
+            },
+        },
+    ),
+    _fn(
         "wick_snap",
         (
-            "Primary observe: title, excerpt, links, interactive elements with role= hints. "
+            "Primary observe: kind, title, excerpt, headings, links, interactive elements with role= hints. "
             "Omit url (or pass here) after act to reuse the current tab — do not re-goto. "
-            "Use THIS snap's hints only. Prefer profile=micro for the cheapest first look."
+            "Need the body? wick_read. Use THIS snap's hints only. Prefer profile=micro first."
         ),
         {
             "type": "object",

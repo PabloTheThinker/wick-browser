@@ -60,6 +60,10 @@ try:
     import elements as wick_elements
 except Exception:
     wick_elements = None  # type: ignore
+try:
+    import page_read as wick_page_read
+except Exception:
+    wick_page_read = None  # type: ignore
 
 _OBSERVE_JS = """() => {
   const skipName = (s) => {
@@ -74,8 +78,47 @@ _OBSERVE_JS = """() => {
     const r = el.getBoundingClientRect();
     return r.width > 1 && r.height > 1;
   };
-  const main = document.querySelector('#search, #dp, [role="main"], main') || document.body;
+  const inChrome = (el) => !!(el && el.closest('nav, header, footer, [role=navigation], [role=banner], [role=contentinfo]'));
+  const pickMain = () => {
+    const scored = [];
+    const add = (el, bonus) => {
+      if (!el) return;
+      const t = ((el.innerText || '') + '').trim();
+      if (t.length < 20) return;
+      scored.push({el, score: t.length + bonus});
+    };
+    add(document.querySelector('#dp'), 8000);
+    const article = document.querySelector('article');
+    if (article && ((article.innerText || '').trim().length >= 400)) add(article, 6000);
+    add(document.querySelector('[itemprop="articleBody"]'), 6000);
+    add(document.querySelector('#mw-content-text'), 5000);
+    add(document.querySelector('[role="main"]'), 4000);
+    add(document.querySelector('main'), 4000);
+    const search = document.querySelector('#search');
+    if (search && search.querySelectorAll('a[href]').length >= 3) add(search, 7000);
+    add(document.querySelector('#content, #main-content'), 2000);
+    scored.sort((a, b) => b.score - a.score);
+    return (scored[0] && scored[0].el) || document.body;
+  };
+  const main = pickMain();
   const text = ((main && main.innerText) || (document.body && document.body.innerText) || '').slice(0, 20000);
+  const headings = [];
+  for (const h of document.querySelectorAll('h1, h2, h3')) {
+    if (!isVisible(h) || inChrome(h)) continue;
+    const t = (h.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (!t || skipName(t)) continue;
+    headings.push({level: parseInt(h.tagName[1], 10), text: t.slice(0, 160)});
+    if (headings.length >= 16) break;
+  }
+  const paragraphs = [];
+  const paraRoot = main || document.body;
+  for (const p of paraRoot.querySelectorAll('p, li')) {
+    if (!isVisible(p) || inChrome(p)) continue;
+    const t = (p.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (t.length < 40) continue;
+    paragraphs.push(t.slice(0, 500));
+    if (paragraphs.length >= 12) break;
+  }
   const title = document.title || '';
   const links = [];
   const seenHref = new Set();
@@ -149,7 +192,7 @@ _OBSERVE_JS = """() => {
   const sel = 'a[href], button, input, textarea, select, [role=button], [role=link], [role=textbox], [role=searchbox]';
   if (main) main.querySelectorAll(sel).forEach(pushEl);
   document.querySelectorAll(sel).forEach(pushEl);
-  return {title, text, links, elements};
+  return {title, text, links, elements, headings, paragraphs};
 }"""
 
 
@@ -1021,7 +1064,9 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             content = html[:max_chars]
         else:
             content = md[:max_chars]
-        return 0, {
+        raw_headings = data.get("headings") if isinstance(data.get("headings"), list) else []
+        raw_paras = data.get("paragraphs") if isinstance(data.get("paragraphs"), list) else []
+        payload = {
             "ok": True,
             "url": page.url,
             "title": title,
@@ -1030,12 +1075,23 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             "dump": dump,
             "chars": len(content),
             "content": content,
+            "text": text,
             "excerpt": re.sub(r"\s+", " ", text).strip()[:600],
             "links": links[:25],
             "elements": elements,
+            "headings": raw_headings[:16],
+            "paragraphs": raw_paras[:12],
             "engine": "chromium",
             "reused": reused,
         }
+        if wick_page_read is not None:
+            shaped = wick_page_read.shape_observe(payload, excerpt_len=600)
+            if shaped.get("excerpt"):
+                payload["excerpt"] = shaped["excerpt"]
+            payload["kind"] = shaped.get("kind")
+            payload["headings"] = shaped.get("headings") or payload["headings"]
+            payload["paragraphs"] = shaped.get("paragraphs") or payload["paragraphs"]
+        return 0, payload
 
     elif action == "content":
         text = page.inner_text("body")

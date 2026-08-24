@@ -25,7 +25,8 @@ wick snap                                         # current page after act (reus
 
 Returns one JSON object with:
 
-- `title`, `excerpt`, `links[]`
+- `kind` — `article` / `search` / `listing` / `login` / `generic`
+- `title`, `excerpt`, `headings[]`, `links[]`
 - `elements[]` — interactive targets with `hint` selectors
 - `reused` — true when Chromium was already on that page (goto skipped)
 - `http_ok`, `timing` (`total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`, `reused`)
@@ -38,7 +39,13 @@ Example element:
 {"id": 12, "role": "link", "name": "More information", "hint": "role=link[name=\"More information\"]", "interactive": true}
 ```
 
-Use `--profile micro` or `--fast` for agent loops.
+Use `--profile micro` or `--fast` for agent loops. When the excerpt is not enough:
+
+```bash
+wick read                    # current page: kind, headings, paragraphs
+```
+
+Prefer `read` over `open`. `open` is the full markdown dump.
 
 ## Plan — `wick plan` (new in 0.6.1)
 

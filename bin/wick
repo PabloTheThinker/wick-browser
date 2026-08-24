@@ -92,6 +92,10 @@ try:
     import agent_skill as wick_agent_skill
 except Exception:
     wick_agent_skill = None  # type: ignore
+try:
+    import page_read as wick_page_read
+except Exception:
+    wick_page_read = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -2191,6 +2195,10 @@ def _gather_snap_chromium(
         "engine": obs.get("engine") or "chromium",
         "profile": prof,
         "reused": bool(obs.get("reused")),
+        "kind": obs.get("kind"),
+        "headings": [h for h in (obs.get("headings") or []) if isinstance(h, dict)],
+        "paragraphs": [p for p in (obs.get("paragraphs") or []) if isinstance(p, str)],
+        "text": obs.get("text") or "",
         "timing": {
             "total_ms": int((time.time() - t0) * 1000),
             "tree_ms": 0,
@@ -2202,8 +2210,27 @@ def _gather_snap_chromium(
             "reused": bool(obs.get("reused")),
         },
     }
+    gathered = _apply_page_read(gathered, excerpt_len=excerpt_len, include_paragraphs=True)
     if wick_observe_cache is not None and cache_key:
         wick_observe_cache.put(cache_key, gathered)
+    return gathered
+
+
+def _apply_page_read(
+    gathered: dict,
+    *,
+    excerpt_len: int,
+    include_paragraphs: bool = False,
+) -> dict:
+    if wick_page_read is None or not gathered.get("ok"):
+        return gathered
+    shaped = wick_page_read.shape_observe(gathered, excerpt_len=excerpt_len)
+    gathered["kind"] = shaped["kind"]
+    gathered["headings"] = shaped["headings"]
+    if include_paragraphs:
+        gathered["paragraphs"] = shaped["paragraphs"]
+    if shaped.get("excerpt"):
+        gathered["excerpt"] = shaped["excerpt"][:excerpt_len]
     return gathered
 
 
@@ -2426,6 +2453,7 @@ def _gather_snap(
         gathered["link_count"] = 0
         gathered["links"] = []
         gathered["links_all"] = []
+    gathered = _apply_page_read(gathered, excerpt_len=excerpt_len, include_paragraphs=True)
     if wick_observe_cache is not None and cache_key:
         wick_observe_cache.put(cache_key, gathered)
     return gathered
@@ -2478,9 +2506,16 @@ def snap_payload(
     if not snap.get("ok"):
         return snap
     reused = bool(snap.get("reused"))
+    if wick_page_read is not None:
+        shaped = wick_page_read.shape_observe(snap, excerpt_len=excerpt_len)
+        snap["kind"] = shaped["kind"]
+        snap["headings"] = shaped["headings"]
+        if shaped.get("excerpt"):
+            snap["excerpt"] = shaped["excerpt"][:excerpt_len]
+    kind = snap.get("kind") or "generic"
     hint = (
-        "Use THIS snap's elements[].hint with wick act click/fill. "
-        "After a click that navigates: wick snap (no URL). "
+        f"kind={kind}. Use THIS snap's elements[].hint with wick act click/fill. "
+        "Need the prose? wick read (no URL). After a click: wick snap. "
         "Search: fill the searchbox hint, then wick act press Enter."
     )
     if reused:
@@ -2494,6 +2529,8 @@ def snap_payload(
     }
     if not full:
         out.pop("markdown", None)
+        out.pop("paragraphs", None)
+        out.pop("text", None)
     out.pop("links_all", None)
     return _annotate_observe(out)
 
@@ -2606,6 +2643,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
             links=snap.get("links_all") or snap.get("links") or [],
             elements=snap.get("elements") or [],
             click_limit=args.click_limit,
+            kind=snap.get("kind"),
+            headings=snap.get("headings"),
         )
     out = {
         "ok": True,
@@ -2616,6 +2655,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "http_ok": snap.get("http_ok"),
         "title": snap.get("title"),
         "excerpt": snap.get("excerpt"),
+        "kind": snap.get("kind"),
+        "headings": snap.get("headings") or [],
         "element_count": snap.get("element_count"),
         "link_count": snap.get("link_count"),
         "ms": snap.get("ms"),
@@ -2682,7 +2723,13 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "link_count": len(matched_links),
         "elements": matched_elements,
         "element_count": len(matched_elements),
-        "hint": "Matches are substring word hits on name/href/excerpt — no LLM.",
+        "headings": (
+            wick_page_read.filter_headings(snap.get("headings") or [], args.q)
+            if wick_page_read is not None
+            else []
+        ),
+        "kind": snap.get("kind"),
+        "hint": "Matches are substring word hits on name/href/excerpt/headings — no LLM.",
         "strip": snap.get("strip"),
     }
     out = _annotate_observe(out)
@@ -2723,6 +2770,39 @@ def cmd_elements(args: argparse.Namespace) -> int:
     }
     out = _annotate_observe(out)
     print(json.dumps(out, ensure_ascii=False))
+    return 0
+
+
+def cmd_read(args: argparse.Namespace) -> int:
+    """Structured page read: kind, headings, paragraphs (not a markdown dump)."""
+    if wick_page_read is None:
+        print(json.dumps({"ok": False, "error": "page_read_module_missing"}))
+        return 1
+    snap = _gather_snap(
+        _cli_observe_url(args),
+        max_chars=int(getattr(args, "max", 12000) or 12000),
+        excerpt_len=int(getattr(args, "excerpt", 1200) or 1200),
+        elements_limit=int(getattr(args, "elements", 20) or 20),
+        link_limit=int(getattr(args, "link_limit", 15) or 15),
+        tree_max=int(getattr(args, "tree_max", 60000) or 60000),
+        wait_until=getattr(args, "wait_until", None) or "load",
+        wait_ms=int(getattr(args, "wait_ms", 2000) or 2000),
+        fast=bool(getattr(args, "fast", False)),
+        no_strip=bool(getattr(args, "no_strip", False)),
+        profile=getattr(args, "profile", None) or "default",
+    )
+    out = wick_page_read.read_payload(
+        snap,
+        excerpt_len=int(getattr(args, "excerpt", 1200) or 1200),
+    )
+    if not out.get("ok"):
+        print(json.dumps(out, ensure_ascii=False))
+        return 1
+    out = _annotate_observe(out)
+    _hist("read", url=out.get("url"), kind=out.get("kind"), headings=out.get("heading_count"))
+    print(json.dumps(out, ensure_ascii=False))
+    if getattr(args, "fail_http", False) and not out.get("http_ok"):
+        return 2
     return 0
 
 
@@ -2789,6 +2869,8 @@ def _rpc_handlers() -> dict:
               links=snap.get("links_all") or snap.get("links") or [],
               elements=snap.get("elements") or [],
               click_limit=int(args.get("click_limit") or 3),
+              kind=snap.get("kind"),
+              headings=snap.get("headings"),
           )
       out = {
           "ok": True,
@@ -2843,6 +2925,12 @@ def _rpc_handlers() -> dict:
           "links": matched_links,
           "elements": matched_elements,
           "excerpt": excerpt if excerpt_score > 0 else None,
+          "headings": (
+              wick_page_read.filter_headings(snap.get("headings") or [], q)
+              if wick_page_read is not None
+              else []
+          ),
+          "kind": snap.get("kind"),
           "strip": snap.get("strip"),
       }
       return _annotate_observe(out)
@@ -3077,6 +3165,30 @@ def _rpc_handlers() -> dict:
           return {"ok": False, "error": "challenge_module_missing"}
       return wick_challenge.probe(str(args.get("url") or ""))
 
+  def _read(args: dict) -> dict:
+      if wick_page_read is None:
+          return {"ok": False, "error": "page_read_module_missing"}
+      snap = _gather_snap(
+          _rpc_observe_url(args),
+          max_chars=int(args.get("max") or 12000),
+          excerpt_len=int(args.get("excerpt") or 1200),
+          elements_limit=int(args.get("elements") or 20),
+          link_limit=int(args.get("link_limit") or 15),
+          tree_max=int(args.get("tree_max") or 60000),
+          wait_until=args.get("wait_until") or "load",
+          wait_ms=int(args.get("wait_ms") or 2000),
+          fast=bool(args.get("fast") if "fast" in args else True),
+          no_strip=bool(args.get("no_strip")),
+          profile=args.get("profile") or "default",
+      )
+      out = wick_page_read.read_payload(
+          snap,
+          excerpt_len=int(args.get("excerpt") or 1200),
+      )
+      if not out.get("ok"):
+          return out
+      return _annotate_observe(out)
+
   def _skill(_args: dict) -> dict:
       if wick_agent_skill is None:
           return {"ok": False, "error": "agent_skill_missing"}
@@ -3097,6 +3209,7 @@ def _rpc_handlers() -> dict:
 
   return {
       "skill": _skill,
+      "read": _read,
       "snap": _snap,
       "observe": _snap,
       "plan": _plan,
@@ -3489,6 +3602,21 @@ def main() -> int:
     p = sub.add_parser("metrics", help="Lightpanda Prometheus metrics from serve CDP")
     _add_json_only(p)
 
+    p = sub.add_parser("read", help="Structured page read: kind, headings, paragraphs")
+    _add_observe_url(p)
+    p.add_argument("--max", type=int, default=12000)
+    p.add_argument("--excerpt", type=int, default=1200)
+    p.add_argument("--elements", type=int, default=20)
+    p.add_argument("--link-limit", type=int, default=15)
+    p.add_argument("--tree-max", type=int, default=60000)
+    p.add_argument("--wait-until", default="load")
+    p.add_argument("--wait-ms", type=int, default=2000)
+    p.add_argument("--fast", action="store_true")
+    p.add_argument("--no-strip", action="store_true")
+    p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
+    _add_json_only(p)
+
     p = sub.add_parser("snap", help="Agent one-shot snapshot: title, excerpt, links, elements")
     _add_observe_url(p)
     p.add_argument("--max", type=int, default=12000)
@@ -3679,6 +3807,7 @@ def main() -> int:
         "run": cmd_run,
         "probe": cmd_probe,
         "challenge": cmd_challenge,
+        "read": cmd_read,
         "snap": cmd_snap,
         "observe": cmd_snap,
         "snap-many": cmd_snap_many,
