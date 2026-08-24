@@ -131,6 +131,45 @@ def test_snap_many_payload_bounded(monkeypatch):
     assert out["mode"] == "agent_snap_many"
 
 
+def test_chrome_launch_mode_default_is_headless(monkeypatch):
+    monkeypatch.delenv("WICK_HEADED", raising=False)
+    monkeypatch.delenv("WICK_HEADLESS", raising=False)
+    assert wick.chrome_launch_mode() == ("1", "0")
+    assert wick.chrome_launch_mode(headed=False, xvfb=False) == ("1", "0")
+
+
+def test_chrome_launch_mode_xvfb_wins_over_headed(monkeypatch):
+    monkeypatch.setenv("WICK_HEADED", "1")
+    monkeypatch.setenv("WICK_HEADLESS", "0")
+    assert wick.chrome_launch_mode(xvfb=True, headed=True) == ("0", "1")
+
+
+def test_chrome_launch_mode_headed_env_uses_current_display(monkeypatch):
+    monkeypatch.setenv("WICK_HEADED", "1")
+    monkeypatch.delenv("WICK_HEADLESS", raising=False)
+    monkeypatch.setenv("DISPLAY", ":1")
+    assert wick.chrome_launch_mode() == ("0", "0")
+
+
+def test_chrome_launch_mode_headless_off_is_headed(monkeypatch):
+    monkeypatch.delenv("WICK_HEADED", raising=False)
+    monkeypatch.setenv("WICK_HEADLESS", "0")
+    assert wick.chrome_launch_mode() == ("0", "0")
+
+
+def test_chrome_launch_mode_headed_flag(monkeypatch):
+    monkeypatch.delenv("WICK_HEADED", raising=False)
+    monkeypatch.delenv("WICK_HEADLESS", raising=False)
+    assert wick.chrome_launch_mode(headed=True) == ("0", "0")
+
+
+def test_chrome_launch_mode_display_alone_stays_headless(monkeypatch):
+    monkeypatch.delenv("WICK_HEADED", raising=False)
+    monkeypatch.delenv("WICK_HEADLESS", raising=False)
+    monkeypatch.setenv("DISPLAY", ":1")
+    assert wick.chrome_launch_mode() == ("1", "0")
+
+
 def test_shields_policy_flag(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("WICK_HOME", str(tmp_path))
     monkeypatch.delenv("WICK_POLICY", raising=False)

@@ -124,6 +124,13 @@ def main() -> int:
             "--disable-component-update",
             "--disable-breakpad",
         ]
+        if (os.environ.get("WICK_CHROME_NO_SANDBOX") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            launch_args.extend(["--no-sandbox", "--disable-setuid-sandbox"])
         try:
             import privacy as wick_privacy
 
@@ -180,7 +187,7 @@ def main() -> int:
             "pid": os.getpid(),
             "cdp": f"http://127.0.0.1:{CDP_PORT}",
             "headless": headless,
-            "display": display,
+            "display": display or os.environ.get("DISPLAY") or "",
             "user_data": str(USER_DATA),
             "started": time.time(),
             "home": str(HOME),

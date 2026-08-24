@@ -200,7 +200,7 @@ wick session export job42     # redacted cookie metadata
 
 Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth. WebRTC LAN IPs are blocked; Client Hints are reduced. Canvas/WebGL farbling is **not** claimed.
 
-CAPTCHA / Cloudflare / Turnstile / GeeTest / Friendly Captcha / AWS WAF pages halt vault `login` / secret `fill` / `passkey` with `human_challenge`. `wick challenge URL` detects a public wall (observe-only; never login). A desktop computer-use agent (Hermes, Grokbot, `WICK_HEADLESS=0`, or `WICK_CHALLENGE_COMPUTER_USE=1`) may `cu` / `click_xy` / `type` the puzzle like a person. After the widget is gone, `wick act login URL --after-challenge` fills. Wick will not send puzzles to a third-party service.
+CAPTCHA / Cloudflare / Turnstile / GeeTest / Friendly Captcha / AWS WAF pages halt vault `login` / secret `fill` / `passkey` with `human_challenge`. `wick challenge URL` detects a public wall (observe-only; never login). A desktop computer-use agent (Hermes, Grokbot, `wick start --headed` / `WICK_HEADED=1` / `WICK_HEADLESS=0`, or `WICK_CHALLENGE_COMPUTER_USE=1`) may `cu` / `click_xy` / `type` the puzzle like a person. `DISPLAY` alone is not a desktop — `wick start` without `--headed` stays headless. After the widget is gone, `wick act login URL --after-challenge` fills. Wick will not send puzzles to a third-party service.
 
 ## Speed
 

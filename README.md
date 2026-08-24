@@ -93,6 +93,8 @@ wick vault audit
 # or: wick act fill 'css=input[type=password]' 'vault://mysite/password'
 
 # Act (Chromium — heavy contact)
+wick start --engine chromium --headed   # window on the current DISPLAY
+# WICK_HEADED=1 wick start --engine chromium
 wick act goto URL
 wick act click 'role=link[name="More information"]'   # role= hints from snap/plan/ask
 wick act click "css=button.submit"
@@ -146,6 +148,9 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_VAULT_STRICT` | `0` | Grant-required **and** relock after fill (standing file keys stay off the fill path) |
 | `WICK_HALT_ON_CHALLENGE` | `1` | Halt vault login/secret fill/passkey on a CAPTCHA/bot-wall |
 | `WICK_CHALLENGE_COMPUTER_USE` | `0` | Allow `cu` / click / type on a challenge (desktop Hermes / Grokbot). Secrets stay blocked. Auto-on when headed or an XDG user seat. |
+| `WICK_HEADED` | `0` | Headed Chromium on the current `DISPLAY` (`wick start --headed`). `DISPLAY` alone is not enough. |
+| `WICK_HEADLESS` | `1` | Set `0` for the same headed desktop launch. `--xvfb` still starts a virtual X server. |
+| `WICK_CHROME_NO_SANDBOX` | `0` | Add `--no-sandbox` when the host user-namespace sandbox cannot start. |
 | `WICK_WEBRTC_IP_GUARD` | `1` | Chromium: no LAN ICE candidates |
 | `WICK_REDUCE_CLIENT_HINTS` | `1` | Drop User-Agent Client Hints (privacy, not UA spoof) |
 | `WICK_PASSKEY_REQUIRE_HSM` | `0` | Refuse passkey create unless a TPM/PKCS#11 token is present |
