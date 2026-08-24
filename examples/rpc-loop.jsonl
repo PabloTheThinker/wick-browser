@@ -1,0 +1,7 @@
+{"id": 1, "cmd": "version", "args": {}}
+{"id": 2, "cmd": "snap", "args": {"url": "https://example.com/", "profile": "micro", "fast": true}}
+{"id": 3, "cmd": "plan", "args": {"url": "https://example.com/", "profile": "micro"}}
+{"id": 4, "cmd": "ask", "args": {"url": "https://example.com/", "q": "learn more", "profile": "micro"}}
+{"id": 5, "cmd": "act", "args": {"action": "goto", "rest": ["https://example.com/"]}}
+{"id": 6, "cmd": "act", "args": {"action": "click", "rest": ["role=link[name=\"Learn more\"]"]}}
+{"id": 7, "cmd": "challenge", "args": {"url": "https://example.com/"}}
