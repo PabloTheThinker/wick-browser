@@ -62,20 +62,46 @@ except Exception:
     wick_elements = None  # type: ignore
 
 _OBSERVE_JS = """() => {
-  const text = (document.body && document.body.innerText) || '';
+  const skipName = (s) => {
+    const t = (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    return !t || /^(skip\\b|main content|keyboard shortcuts)$/.test(t);
+  };
+  const isVisible = (el) => {
+    if (!el) return false;
+    if (el.closest('[aria-hidden="true"]')) return false;
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 1 && r.height > 1;
+  };
+  const main = document.querySelector('#search, #dp, [role="main"], main') || document.body;
+  const text = ((main && main.innerText) || (document.body && document.body.innerText) || '').slice(0, 20000);
   const title = document.title || '';
   const links = [];
   const seenHref = new Set();
-  for (const a of document.querySelectorAll('a[href]')) {
+  const addLink = (a) => {
     const href = a.href || '';
-    if (!href || seenHref.has(href)) continue;
+    if (!href || seenHref.has(href)) return;
+    if (href.indexOf('javascript:') === 0) return;
+    const t = (a.innerText || a.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    if (skipName(t)) return;
+    try {
+      const u = new URL(href, location.href);
+      if (u.pathname === location.pathname && u.search === location.search && u.hash) return;
+    } catch (e) {}
     seenHref.add(href);
-    links.push({
-      text: (a.innerText || a.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
-      href,
-    });
-    if (links.length >= 40) break;
-  }
+    links.push({ text: t, href });
+  };
+  const collectLinks = (root) => {
+    if (!root) return;
+    for (const a of root.querySelectorAll('a[href]')) {
+      if (links.length >= 40) break;
+      if (!isVisible(a)) continue;
+      addLink(a);
+    }
+  };
+  collectLinks(main);
+  if (links.length < 12) collectLinks(document);
   const roleOf = (el) => {
     const r = (el.getAttribute('role') || '').toLowerCase();
     if (r) return r;
@@ -103,16 +129,26 @@ _OBSERVE_JS = """() => {
     return (el.innerText || el.value || el.getAttribute('name') || '').replace(/\\s+/g, ' ').trim();
   };
   const elements = [];
-  const sel = 'a[href], button, input, textarea, select, [role=button], [role=link], [role=textbox], [role=searchbox]';
-  document.querySelectorAll(sel).forEach((el) => {
-    if (elements.length >= 40) return;
+  const seenEl = new Set();
+  const pushEl = (el) => {
+    if (!el || seenEl.has(el) || elements.length >= 40) return;
     const role = roleOf(el);
     const name = nameOf(el).slice(0, 80);
+    const keepHiddenSearch = role === 'searchbox' || (el.getAttribute && el.getAttribute('type') === 'search');
+    if (!keepHiddenSearch && !isVisible(el)) return;
+    if (role === 'link' && skipName(name)) return;
+    seenEl.add(el);
     let hint = null;
     if (name) hint = 'role=' + role + '[name="' + name.replace(/"/g, '') + '"]';
     else if (el.id) hint = 'css=#' + el.id;
     elements.push({role, name, interactive: true, hint});
-  });
+  };
+  document.querySelectorAll(
+    'input[type=search], [role=searchbox], input[name=field-keywords], #twotabsearchtextbox'
+  ).forEach(pushEl);
+  const sel = 'a[href], button, input, textarea, select, [role=button], [role=link], [role=textbox], [role=searchbox]';
+  if (main) main.querySelectorAll(sel).forEach(pushEl);
+  document.querySelectorAll(sel).forEach(pushEl);
   return {title, text, links, elements};
 }"""
 
@@ -402,14 +438,24 @@ def pages_info(ctx):
 
 def resolve_locator(page, sel: str):
     """Translate role=link[name=\"...\"] hints to Playwright get_by_role."""
-    m = ROLE_SEL_RE.match((sel or "").strip())
+    raw = (sel or "").strip()
+    m = ROLE_SEL_RE.match(raw)
     if m:
         role, name1, name2 = m.groups()
         name = name1 if name1 is not None else name2
-        if name:
-            return page.get_by_role(role, name=name)
-        return page.get_by_role(role)
-    return page.locator(sel)
+        kwargs = {"name": name} if name else {}
+        loc = page.get_by_role(role, **kwargs)
+        # HTML type=search is ARIA searchbox. Older snaps emitted textbox.
+        if role == "textbox":
+            loc = loc.or_(page.get_by_role("searchbox", **kwargs))
+        elif role == "searchbox":
+            loc = loc.or_(page.get_by_role("textbox", **kwargs))
+        return loc
+    if raw.startswith("css="):
+        return page.locator(raw[4:])
+    if raw.startswith("text="):
+        return page.get_by_text(raw[5:])
+    return page.locator(raw)
 
 
 # Secret injection always halts on a challenge. Click/type may proceed when

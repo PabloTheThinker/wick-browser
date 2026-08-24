@@ -37,6 +37,11 @@ class TestParseTree(unittest.TestCase):
         els = elements.parse_tree_text("12 [i] link 'More information'")
         self.assertEqual(els[0]["hint"], 'role=link[name="More information"]')
 
+    def test_hint_for_searchbox_is_not_textbox(self):
+        els = elements.parse_tree_text("15 [i] searchbox 'Search Amazon'")
+        self.assertEqual(els[0]["role"], "searchbox")
+        self.assertEqual(els[0]["hint"], 'role=searchbox[name="Search Amazon"]')
+
     def test_interactive_only_limits(self):
         all_e = elements.parse_tree_text(SAMPLE_TREE)
         hit = elements.interactive_only(all_e, limit=2)
@@ -86,6 +91,23 @@ class TestPlanSuggestions(unittest.TestCase):
         self.assertIn("screenshot", actions)
         clicks = [s for s in plan if s["action"] == "click"]
         self.assertTrue(any("role=link" in (s.get("hint") or "") for s in clicks))
+
+    def test_plan_suggests_fill_for_search_field(self):
+        els = elements.parse_tree_text(
+            "1 document\n  2 [i] searchbox 'Search Amazon'\n  3 [i] button 'Go'\n"
+        )
+        plan = elements.plan_suggestions(
+            url="https://www.amazon.com/",
+            title="Amazon.com",
+            excerpt="Spend less. Smile more.",
+            links=[],
+            elements=els,
+            click_limit=2,
+        )
+        fills = [s for s in plan if s["action"] == "fill"]
+        self.assertEqual(len(fills), 1)
+        self.assertIn("role=searchbox", fills[0]["cmd"])
+        self.assertIn("press Enter", fills[0]["cmd"])
 
     def test_plan_suggests_login_when_password_form(self):
         tree = "1 document\n  2 textbox 'Email'\n  3 textbox 'Password'\n  4 [i] button 'Log in'\n"

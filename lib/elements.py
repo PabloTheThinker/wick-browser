@@ -62,7 +62,10 @@ def _hint(role: str, name: str) -> str | None:
         return f'role=link[name="{name}"]'
     if role == "button":
         return f'role=button[name="{name}"]'
-    if role in ("textbox", "searchbox"):
+    if role == "searchbox":
+        # Playwright's textbox role does not match <input type="search">.
+        return f'role=searchbox[name="{name}"]'
+    if role == "textbox":
         return f'role=textbox[name="{name}"]'
     if role:
         return f'role={role}[name="{name}"]'
@@ -232,6 +235,29 @@ def plan_suggestions(
             "action": "links",
             "cmd": f"wick links {url!r}",
             "why": f"page has {len(links)} links; sample: {first.get('text') or first.get('href')}",
+        })
+    search = next(
+        (
+            el
+            for el in elements
+            if (el.get("role") or "") in {"searchbox", "textbox"}
+            and "search" in (el.get("name") or "").lower()
+            and el.get("hint")
+        ),
+        None,
+    )
+    if search:
+        hint = search["hint"]
+        out.append({
+            "action": "fill",
+            "cmd": f"wick act fill {hint!r} 'query' && wick act press Enter",
+            "hint": hint,
+            "element": {
+                "id": search.get("id"),
+                "role": search.get("role"),
+                "name": search.get("name"),
+            },
+            "why": f"search field: {search.get('name')}",
         })
     for el in elements[: max(0, click_limit)]:
         hint = el.get("hint")

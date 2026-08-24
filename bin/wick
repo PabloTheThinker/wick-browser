@@ -2074,6 +2074,90 @@ def _apply_profile(
     }
 
 
+def _gather_snap_chromium(
+    url: str,
+    *,
+    max_chars: int,
+    excerpt_len: int,
+    elements_limit: int,
+    link_limit: int,
+    wait_ms: int,
+    t0: float,
+    prof: str | None,
+    cache_key,
+) -> dict:
+    """One Chromium observe. Parallel tree+markdown races the shared page."""
+    obs = chrome_observe_fetch(
+        url,
+        dump="markdown",
+        max_chars=max_chars,
+        wait_ms=wait_ms,
+    )
+    if not obs.get("ok"):
+        return obs
+    text = obs.get("content") or ""
+    links = [lnk for lnk in (obs.get("links") or []) if isinstance(lnk, dict)]
+    if not links:
+        links = extract_md_links(text)
+    elements = [el for el in (obs.get("elements") or []) if isinstance(el, dict)]
+    if wick_elements is not None:
+        for el in elements:
+            role = str(el.get("role") or "")
+            name = str(el.get("name") or "")
+            if role and name:
+                el["hint"] = wick_elements._hint(role, name)
+            elif not el.get("hint") and name:
+                el["hint"] = f'role={role}[name="{name}"]'
+        elements = wick_elements.interactive_only(elements, limit=elements_limit)
+    else:
+        elements = elements[:elements_limit]
+    excerpt = re.sub(r"\s+", " ", (obs.get("excerpt") or "")).strip()
+    if not excerpt:
+        excerpt = re.sub(r"\s+", " ", text).strip()
+    title = str(obs.get("title") or "")
+    if not title:
+        for line in text.splitlines():
+            s = line.strip()
+            if s.startswith("# "):
+                title = s[2:].strip()
+                break
+    gathered = {
+        "ok": True,
+        "product": "wick",
+        "version": VERSION,
+        "url": obs.get("url") or url,
+        "http_status": obs.get("http_status"),
+        "http_ok": obs.get("http_ok"),
+        "title": title,
+        "ms": obs.get("ms") or 0,
+        "chars": obs.get("chars") or len(text),
+        "excerpt": excerpt[:excerpt_len],
+        "markdown": text,
+        "link_count": len(links),
+        "links": links[:link_limit],
+        "links_all": links,
+        "elements": elements,
+        "element_count": len(elements),
+        "tree_chars": None,
+        "fast": False,
+        "engine": obs.get("engine") or "chromium",
+        "fallback": obs.get("fallback") or "no_lightpanda",
+        "profile": prof,
+        "timing": {
+            "total_ms": int((time.time() - t0) * 1000),
+            "tree_ms": 0,
+            "md_ms": obs.get("ms") or 0,
+            "cache": False,
+            "profile": prof,
+            "parallel": False,
+            "engine": "chromium",
+        },
+    }
+    if wick_observe_cache is not None and cache_key:
+        wick_observe_cache.put(cache_key, gathered)
+    return gathered
+
+
 def _gather_snap(
     url: str,
     *,
@@ -2137,6 +2221,18 @@ def _gather_snap(
             return hit
 
     t0 = time.time()
+    if find_lightpanda() is None:
+        return _gather_snap_chromium(
+            url,
+            max_chars=md_max,
+            excerpt_len=excerpt_len,
+            elements_limit=elements_limit,
+            link_limit=link_limit,
+            wait_ms=wait,
+            t0=t0,
+            prof=prof,
+            cache_key=cache_key,
+        )
     fetch_kw = dict(wait_until=wu, wait_ms=wait, strip=strips)
 
     def _tree():

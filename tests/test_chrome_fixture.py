@@ -153,6 +153,33 @@ class TestChromeFixture(unittest.TestCase):
         waited = self._run("wait_text", "Welcome Ada")
         self.assertTrue(waited.get("ok"), waited)
 
+    def test_observe_prefers_main_search_results(self):
+        shop = f"http://127.0.0.1:{self.port}/search-results.html"
+        out = self._run("observe", shop, "markdown", "4000", "200")
+        self.assertTrue(out.get("ok"), out)
+        excerpt = out.get("excerpt") or ""
+        content = out.get("content") or ""
+        self.assertTrue(
+            "70,000" in excerpt or "Anker" in excerpt or "Anker" in content,
+            excerpt,
+        )
+        texts = " ".join(str(l.get("text") or "") for l in out.get("links") or [])
+        hrefs = " ".join(str(l.get("href") or "") for l in out.get("links") or [])
+        self.assertTrue("Anker" in texts or "/dp/anker" in hrefs, out.get("links"))
+        search = next(
+            (e for e in out.get("elements") or [] if e.get("role") == "searchbox"),
+            None,
+        )
+        self.assertIsNotNone(search, out.get("elements"))
+        self.assertEqual(search.get("hint"), 'role=searchbox[name="Search Amazon"]')
+
+    def test_fill_searchbox_accepts_legacy_textbox_hint(self):
+        shop = f"http://127.0.0.1:{self.port}/search-results.html"
+        self.assertTrue(self._run("goto", shop).get("ok"))
+        filled = self._run("fill", 'role=textbox[name="Search Amazon"]', "usb-c cable")
+        self.assertTrue(filled.get("ok"), filled)
+        self.assertEqual(self.page.locator("#q").input_value(), "usb-c cable")
+
     def test_observe_returns_role_hints_for_agents(self):
         out = self._run("observe", self.base, "markdown", "4000", "200")
         self.assertTrue(out.get("ok"), out)

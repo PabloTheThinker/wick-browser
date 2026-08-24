@@ -87,6 +87,7 @@ def test_gather_snap_micro_skips_markdown(monkeypatch):
             "http_status": 200,
         }
 
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
     monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
     monkeypatch.setattr(wick, "wick_observe_cache", None)
     out = wick._gather_snap("https://example.com/", profile="micro")
@@ -115,6 +116,7 @@ def test_gather_snap_default_fetches_tree_and_markdown(monkeypatch):
             "http_status": 200,
         }
 
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
     monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
     monkeypatch.setattr(wick, "wick_observe_cache", None)
     out = wick._gather_snap("https://example.com/", profile="default")
@@ -140,6 +142,52 @@ def test_snap_many_payload_bounded(monkeypatch):
     assert out["count"] == 2
     assert out["concurrency"] == 2
     assert out["mode"] == "agent_snap_many"
+
+
+def test_gather_snap_chromium_fallback_is_single_observe(monkeypatch):
+    calls: list[str] = []
+
+    def fake_observe(url, dump="markdown", max_chars=12000, wait_ms=2000):
+        calls.append(dump)
+        return {
+            "ok": True,
+            "url": url,
+            "title": "Amazon.com : usb-c cable",
+            "content": "# Amazon.com : usb-c cable\n\n[Anker USB C](https://www.amazon.com/dp/example)",
+            "excerpt": "1-16 of over 70,000 results for usb-c cable Anker USB C to USB C Cable $9.99",
+            "links": [
+                {
+                    "text": "Anker USB C to USB C Cable",
+                    "href": "https://www.amazon.com/dp/example",
+                }
+            ],
+            "elements": [
+                {
+                    "role": "searchbox",
+                    "name": "Search Amazon",
+                    "hint": 'role=textbox[name="Search Amazon"]',
+                    "interactive": True,
+                }
+            ],
+            "http_ok": True,
+            "http_status": 200,
+            "engine": "chromium",
+            "fallback": "no_lightpanda",
+            "ms": 20,
+            "chars": 80,
+        }
+
+    monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
+    monkeypatch.setattr(wick, "chrome_observe_fetch", fake_observe)
+    monkeypatch.setattr(wick, "wick_observe_cache", None)
+    out = wick._gather_snap("https://www.amazon.com/s?k=usb-c+cable")
+    assert calls == ["markdown"]
+    assert out["ok"] is True
+    assert out["engine"] == "chromium"
+    assert out["timing"]["parallel"] is False
+    assert out["link_count"] >= 1
+    assert "Anker" in (out.get("excerpt") or "")
+    assert out["elements"][0]["hint"] == 'role=searchbox[name="Search Amazon"]'
 
 
 def test_chrome_launch_mode_default_is_headless(monkeypatch):
