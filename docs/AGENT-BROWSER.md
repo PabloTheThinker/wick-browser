@@ -1,25 +1,14 @@
 # Wick as an agent browser
 
-Wick 0.9 is built so agents can **observe → plan → ask → act** (and **login**) without a human GUI in the loop. One JSON surface. Two engines. No drama.
-
-## Wick brothers
-
-Think of Wick as two specialists that share a mission:
-
-| Brother | Engine | Job |
-|---------|--------|-----|
-| **Light recon** | Lightpanda (default) | Fast fetch, markdown, semantic tree, `snap` / `plan` / `ask` / `elements`, shields |
-| **Heavy contact** | Chromium (Playwright) | Clicks, fills, tabs, PDF, screenshots, downloads |
-
-Recon stays cheap (~tens of MB). Contact lights only when the page must move. Agents should prefer recon until a `hint` or form forces Chromium.
+Wick 0.9 is a **standalone Chromium browser for agents**. Observe and act share one engine and one JSON surface. Lightpanda is not required.
 
 ```
 Agent
   │
-  ├─ observe  → snap / elements / open / tree   (light recon)
+  ├─ observe  → snap / elements / open / tree
   ├─ plan     → wick plan   (suggested next actions)
   ├─ ask      → wick ask    (filter targets by query, no LLM)
-  ├─ act      → wick act …                      (heavy contact)
+  ├─ act      → wick act …  (click / fill / login / cu)
   └─ batch    → wick run playbook.json
 ```
 
@@ -28,17 +17,23 @@ Agent
 Primary situation report. Prefer this over dumping full markdown every turn.
 
 ```bash
+wick commands                                     # CLI catalog (or just: wick)
+wick call snap '{"url":"https://example.com/","fast":true}'
+wick skill                                        # purpose, loop, rules
 wick snap https://example.com/ --profile micro    # tree only (Hermes first look)
-wick snap https://example.com/ --fast             # tree + markdown in parallel
+wick snap https://example.com/ --fast             # excerpt + elements
+wick snap                                         # current page after act (reused: true)
 ```
 
 Returns one JSON object with:
 
-- `title`, `excerpt`, `links[]`
+- `kind` — `article` / `search` / `listing` / `login` / `generic`
+- `title`, `excerpt`, `headings[]`, `links[]`
 - `elements[]` — interactive targets with `hint` selectors
-- `http_ok`, `timing` (`total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`)
+- `reused` — true when Chromium was already on that page (goto skipped)
+- `http_ok`, `timing` (`total_ms`, `tree_ms`, `md_ms`, `cache`, `profile`, `parallel`, `reused`)
 
-`--profile micro|default|full` sets wait + field budgets. `micro` skips the markdown fetch. `WICK_SNAP_PROFILE` applies when `--profile` is omitted. `wick snap-many URL URL…` observes several pages with bounded concurrency (default `micro`).
+`--profile micro|default|full` sets wait + field budgets. `WICK_SNAP_PROFILE` applies when `--profile` is omitted. `wick snap-many URL URL…` observes several pages on the shared Chromium (serialized so snaps do not race).
 
 Example element:
 
@@ -46,7 +41,15 @@ Example element:
 {"id": 12, "role": "link", "name": "More information", "hint": "role=link[name=\"More information\"]", "interactive": true}
 ```
 
-Use `--profile micro` or `--fast` for agent loops.
+Use `--profile micro` or `--fast` for agent loops. When the excerpt is not enough:
+
+```bash
+wick read                    # current page: kind, headings, paragraphs
+wick read --q "rfc 2606"     # matching paragraphs only
+wick read --section "Why these names exist"
+```
+
+Prefer `read` over `open`. `open` is the full markdown dump. `ask --q` also returns matching headings and paragraphs.
 
 ## Plan — `wick plan` (new in 0.6.1)
 
@@ -70,7 +73,7 @@ Snap plus a deterministic fuzzy filter — no LLM in the loop:
 wick ask https://example.com/ --q "more information"
 ```
 
-Query words (2+ chars) are matched as case-insensitive substrings against link text/href, element name/role/hint, and the excerpt. Output contains only the matching `links[]` and `elements[]` (score-sorted), plus `excerpt_score` so you know whether the body text is relevant at all.
+Query words (2+ chars) are matched as case-insensitive substrings against link text/href, element name/role/hint, excerpt, headings, and paragraphs. Output contains only the matching `links[]`, `elements[]`, `headings[]`, and `paragraphs[]` (score-sorted), plus `excerpt_score` so you know whether the body text is relevant at all.
 
 ## Elements — click targets
 
@@ -100,7 +103,8 @@ New in 0.6.1:
 
 New in 0.9:
 
-- **`wick act login URL`** — Chrome/Brave-style autofill: match a vault entry to the page origin, fill username/password (and TOTP if present), optionally submit. Secrets never appear in JSON.
+- **`wick act login URL`** — Chrome/Brave-style autofill: match a vault entry to the page origin, fill username/password (and TOTP if present), optionally submit. Secrets never appear in JSON. `--after-challenge [ms]` waits until a detected widget is gone, then fills (does not solve).
+- **`wick challenge URL`** — observe-only detect (GET public HTML). Never logs in. Never solves.
 - **`wick vault suggest --url`** — agent-safe recipe (`refs` + form hints + `login_cmd`).
 - Fill of `vault://` refs is **origin-bound** to the live page. Phishing URLs do not get the password.
 

@@ -1,6 +1,6 @@
 # Wick — the browser for agents
 
-Wick is a free, open-source **agent browser**: a command-line tool built for AI agents that read the web constantly and touch it rarely. One clean JSON surface. Two engines underneath — **light recon** (Lightpanda) for observing, **heavy contact** (Chromium) for the moments you must click, type, or render. That split is the whole philosophy: most of an agent's life is reading, so the flame stays thin until interaction actually matters.
+Wick is a free, open-source **standalone agent browser**: Chromium plus a command-line JSON surface built for AI agents. Observe and act share one engine. Most of an agent's life is reading; Wick still returns compact snaps first and only drives the page when you `act`.
 
 Everything runs on your machine. No cloud relay, no hosted session, no telemetry.
 
@@ -17,13 +17,16 @@ A human browser optimizes for pixels. An agent needs structure: titles, excerpts
 ## The loop: observe → plan → ask → act
 
 ```bash
-wick snap https://example.com/ --fast   # situation report: title, excerpt, links, elements
+wick                                    # JSON catalog — the CLI is the full surface
+wick call snap '{"url":"https://example.com/","fast":true}'
+wick snap https://example.com/ --fast   # situation report: kind, excerpt, headings, elements
+wick read --q "terms"                   # structured body; --section keeps one heading
 wick plan https://example.com/ --fast   # ranked next steps, each with a ready-to-run cmd
-wick ask  https://example.com/ --q "terms"  # deterministic filter — no LLM call
+wick ask  https://example.com/ --q "terms"  # filter links, headings, paragraphs — no LLM
 wick act click 'role=link[name="More information"]'  # heavy contact, only when needed
 ```
 
-`snap` returns interactive elements with `role=` hints that resolve natively to Playwright targets on the act path — the observation *is* the selector. `plan` turns a snapshot into goal-agnostic suggestions with runnable commands. `ask` filters links, elements, and excerpt by substring match, so cheap queries stay cheap. `act` drives real Chromium: click, fill, scroll, tabs, `wait_url` navigation guards, screenshots, PDF. `wick run playbook.json` chains it all into multi-step jobs where unknown actions fail soft instead of killing the run.
+`snap` returns interactive elements with `role=` hints that resolve natively to Playwright targets on the act path — the observation *is* the selector. `read` is the structured body (`kind`, headings, sections, paragraphs); `--q` / `--section` keep only the matching prose. `plan` turns a snapshot into goal-agnostic suggestions with runnable commands. `ask` filters links, headings, paragraphs, and excerpt by substring match, so cheap queries stay cheap. `act` drives real Chromium: click, fill, scroll, tabs, `wait_url` navigation guards, screenshots, PDF. `wick run playbook.json` chains it all into multi-step jobs where unknown actions fail soft instead of killing the run.
 
 ## Harness integration (0.7)
 
@@ -69,4 +72,4 @@ If you're choosing an agent browser in 2026, the question is not "can it drive a
 
 ## Version and license
 
-Public surface tracks **0.9**: observe + act + sessions + shields + **origin-bound vault** (Chrome/Brave-style autofill via `wick act login`, TOTP, Proton Pass/KeePassXC/AgentMail refs), plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; optional engines (Lightpanda, Chromium via Playwright) keep their own licenses. Contributions welcome.
+Public surface tracks **0.9**: standalone Chromium observe + act + sessions + shields + **origin-bound vault** (Chrome/Brave-style autofill via `wick act login`, TOTP, Proton Pass/KeePassXC/AgentMail refs), plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; Playwright/Chromium keep their own licenses. Contributions welcome.

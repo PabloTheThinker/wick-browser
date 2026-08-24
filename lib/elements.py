@@ -62,11 +62,52 @@ def _hint(role: str, name: str) -> str | None:
         return f'role=link[name="{name}"]'
     if role == "button":
         return f'role=button[name="{name}"]'
-    if role in ("textbox", "searchbox"):
+    if role == "searchbox":
+        # Playwright's textbox role does not match <input type="search">.
+        return f'role=searchbox[name="{name}"]'
+    if role == "textbox":
         return f'role=textbox[name="{name}"]'
     if role:
         return f'role={role}[name="{name}"]'
     return f'text={name}'
+
+
+def tree_from_elements(title: str, elements: list[dict[str, Any]]) -> str:
+    """Lightpanda-shaped semantic_tree_text so snap/plan/ask share one parser."""
+    safe_title = (title or "").replace("'", "")
+    lines = [f"1 document '{safe_title}'"]
+    for i, el in enumerate(elements or [], start=2):
+        role = re.sub(r"[^a-zA-Z0-9_-]", "", str(el.get("role") or "generic")) or "generic"
+        name = (el.get("name") or "").replace("'", "")
+        if name:
+            lines.append(f"{i} [i] {role} '{name}'")
+        else:
+            lines.append(f"{i} [i] {role}")
+    return "\n".join(lines)
+
+
+def markdown_from_observe(
+    title: str,
+    text: str,
+    links: list[dict[str, Any]] | None = None,
+) -> str:
+    """Cheap markdown so extract_md_links / ask still work on the Chromium path."""
+    parts: list[str] = []
+    if title:
+        parts.append(f"# {title.strip()}")
+        parts.append("")
+    for link in links or []:
+        href = str(link.get("href") or "").strip()
+        if not href:
+            continue
+        label = (link.get("text") or href).replace("]", " ").replace("\n", " ").strip() or href
+        parts.append(f"[{label}]({href})")
+    body = (text or "").strip()
+    if body:
+        if parts:
+            parts.append("")
+        parts.append(body)
+    return "\n".join(parts)
 
 
 def interactive_only(elements: list[dict[str, Any]], limit: int = 50) -> list[dict[str, Any]]:
@@ -134,6 +175,8 @@ def plan_suggestions(
     links: list[dict[str, Any]],
     elements: list[dict[str, Any]],
     click_limit: int = 3,
+    kind: str | None = None,
+    headings: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Goal-agnostic next-step hints for agents (built from snap data)."""
     out: list[dict[str, Any]] = []
@@ -177,12 +220,29 @@ def plan_suggestions(
                 f"(also: wick vault suggest --url {url!r})"
             ),
         })
+    read_cmd = "wick read" if not url else f"wick read {url!r}"
+    if (kind or "") == "article" or (headings and excerpt):
+        out.append({
+            "action": "read",
+            "cmd": read_cmd,
+            "why": "structured page read (kind, headings, paragraphs) — prefer this over a markdown dump",
+        })
+        section = next(
+            (h.get("text") for h in (headings or []) if int(h.get("level") or 2) >= 2 and h.get("text")),
+            None,
+        )
+        if section:
+            out.append({
+                "action": "read",
+                "cmd": f"{read_cmd} --section {section!r}",
+                "why": f"focused read of the {section!r} section only",
+            })
     out.append({
         "action": "open",
         "cmd": f"wick open {url!r} --max 8000",
-        "why": "read full markdown body",
+        "why": "full markdown dump when the structured read is not enough",
     })
-    if excerpt and len(excerpt) < 400:
+    if excerpt and len(excerpt) < 400 and (kind or "") != "article":
         out.append({
             "action": "open",
             "cmd": f"wick open {url!r}",
@@ -194,6 +254,29 @@ def plan_suggestions(
             "action": "links",
             "cmd": f"wick links {url!r}",
             "why": f"page has {len(links)} links; sample: {first.get('text') or first.get('href')}",
+        })
+    search = next(
+        (
+            el
+            for el in elements
+            if (el.get("role") or "") in {"searchbox", "textbox"}
+            and "search" in (el.get("name") or "").lower()
+            and el.get("hint")
+        ),
+        None,
+    )
+    if search:
+        hint = search["hint"]
+        out.append({
+            "action": "fill",
+            "cmd": f"wick act fill {hint!r} 'query' && wick act press Enter",
+            "hint": hint,
+            "element": {
+                "id": search.get("id"),
+                "role": search.get("role"),
+                "name": search.get("name"),
+            },
+            "why": f"search field: {search.get('name')}",
         })
     for el in elements[: max(0, click_limit)]:
         hint = el.get("hint")

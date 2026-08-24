@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<!-- Observe-only excerpt of public GitHub login markup (no credentials, no session). -->
+<html lang="en">
+<head><title>Sign in to GitHub · GitHub</title></head>
+<body>
+  <main>
+    <h1>Sign in to GitHub</h1>
+    <form action="/session" method="post">
+      <label>Username or email address</label>
+      <input type="text" name="login" autocomplete="username">
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="current-password">
+      <div class="cf-turnstile" data-sitekey="public-example"></div>
+      <iframe src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile" title="Widget"></iframe>
+      <input type="submit" value="Sign in">
+    </form>
+  </main>
+</body>
+</html>

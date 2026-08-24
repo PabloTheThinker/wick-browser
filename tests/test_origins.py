@@ -121,5 +121,51 @@ class TestOriginCompat(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class TestSameObserveTarget(unittest.TestCase):
+    def test_same_path_ignores_live_tracking_query(self):
+        self.assertTrue(
+            origins.same_observe_target(
+                "https://example.com/shop?ref=nav",
+                "https://example.com/shop",
+            )
+        )
+
+    def test_target_query_must_match(self):
+        self.assertTrue(
+            origins.same_observe_target(
+                "https://example.com/s?k=usb&ref=1",
+                "https://example.com/s?k=usb",
+            )
+        )
+        self.assertFalse(
+            origins.same_observe_target(
+                "https://example.com/s?k=usb",
+                "https://example.com/s?k=keyboard",
+            )
+        )
+
+    def test_path_and_host_must_match(self):
+        self.assertFalse(
+            origins.same_observe_target(
+                "https://example.com/a",
+                "https://example.com/b",
+            )
+        )
+        self.assertFalse(
+            origins.same_observe_target(
+                "https://example.com/",
+                "https://evil.test/",
+            )
+        )
+
+    def test_here_aliases(self):
+        self.assertTrue(origins.is_here_url(""))
+        self.assertTrue(origins.is_here_url("here"))
+        self.assertTrue(origins.is_here_url("."))
+        self.assertTrue(origins.is_here_url("--here"))
+        self.assertFalse(origins.is_here_url("https://example.com/"))
+        self.assertTrue(origins.same_observe_target("https://example.com/", "here"))
+
+
 if __name__ == "__main__":
     unittest.main()

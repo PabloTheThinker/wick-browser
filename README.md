@@ -4,24 +4,30 @@
 
 Not a human browser with a side door for bots — a tool built so **agents** can see the page, pick a target, and finish the job. Headless by default. Full enough when the work gets close: tabs, forms, PDF, downloads, sessions, shields.
 
-*Wick brothers: light recon + heavy contact — one mission, clean tools, no wasted motion.*
+*Standalone Chromium. One JSON surface. No extra browser binary.*
 
 ```bash
+wick                                                   # JSON catalog (same as wick commands)
+wick call snap '{"url":"https://example.com/","fast":true}'
+wick skill                                             # purpose + loop + rules (harness start)
 wick snap https://example.com/ --profile micro         # cheapest observe (tree only)
+wick read                                              # structured body after snap
+wick read --q "rfc" --section "Why these names exist"  # matching prose only
 wick plan https://example.com/ --fast                  # suggested next actions (cmd + why)
 wick ask  https://example.com/ --q "more information"  # filter targets by query — no LLM
 wick act  click 'role=link[name="More information"]'   # act: hints resolve directly
+wick snap                                              # re-observe here (no second goto)
 ```
 
-**Agents:** start with [AGENTS.md](AGENTS.md). Hermes / Claude / ChatGPT / Grok: [docs/HERMES.md](docs/HERMES.md).
+**Agents:** start with [AGENTS.md](AGENTS.md) and [skills/wick/SKILL.md](skills/wick/SKILL.md). Hermes / Claude / ChatGPT / Grok: [docs/HERMES.md](docs/HERMES.md).
 
 ## Why Wick
 
 | Need | Wick |
 |------|------|
-| Agent-friendly page text | Markdown / semantic tree (Lightpanda) |
+| Agent-friendly page text | Title, excerpt, links, `role=` hints from Chromium |
 | Next-step planning | `plan` (goal-agnostic suggestions), `ask` (fuzzy target filter, no LLM) |
-| Less RAM than always-on Chrome | Lightpanda ~tens of MB; Chromium on demand |
+| One process | Playwright Chromium for observe and act |
 | Tracker / ad blocking | EasyList + EasyPrivacy + Fanboy + custom URL blocks |
 | Sessions | Isolated cookie jars + Chromium profiles |
 | Credentials | Origin-bound vault + `wick act login` (Chrome/Brave-style autofill; Proton Pass / KeePassXC refs) |
@@ -38,13 +44,13 @@ CDP stays on **loopback** by default. Proxy credentials and vault secrets are ne
 
 ## Install
 
-**Requirements:** Linux x86_64 (primary), Python 3.10+, curl. Optional: [Lightpanda](https://github.com/lightpanda-io/browser) for the fast path.
+**Requirements:** Linux x86_64 (primary), Python 3.10+, curl. Playwright Chromium is the engine (`wick install-engine`).
 
 ```bash
 git clone https://github.com/PabloTheThinker/wick-browser.git
 cd wick-browser
 make install                 # or ./scripts/install.sh
-wick install-engine          # optional Lightpanda nightly
+wick install-engine          # Playwright Chromium
 make doctor
 wick open https://example.com/
 ```
@@ -54,13 +60,15 @@ Data directory: `~/.wick/` (override with `WICK_HOME`).
 ## Quick commands
 
 ```bash
-# Observe & plan (Lightpanda — light recon)
+# Observe & plan (Chromium)
 wick ensure
+wick skill                    # compact agent skill (purpose, loop, rules)
 wick snap URL --profile micro # cheapest situation report (tree only)
-wick snap URL --fast          # tree + excerpt in parallel
-wick snap-many URL URL…       # parallel observe
-wick plan URL --fast          # suggested next actions
-wick ask URL --q "terms"      # filter links/elements by query
+wick snap URL --fast          # tree + excerpt
+wick snap                     # current page after act (skip goto)
+wick snap-many URL URL…       # serialized observe on one Chromium
+wick plan [URL] --fast        # suggested next actions
+wick ask [URL] --q "terms"    # filter links/elements by query
 wick elements URL             # interactive hints
 wick open URL                 # full markdown
 wick mcp                      # MCP stdio (Hermes, Claude, Cursor)
@@ -85,9 +93,16 @@ wick vault init
 wick vault set mysite --username me --password '…' --url https://example.com/login
 wick vault suggest --url https://example.com/login
 wick act login https://example.com/login
+wick act login https://example.com/login --after-challenge 15000   # wait until widget gone, then fill
+wick challenge https://github.com/login                            # observe-only detect; never login
+WICK_VAULT_PASSPHRASE='…' wick vault harden                        # delete standing master.key
+WICK_VAULT_BACKUP_PASSPHRASE='…' wick vault backup /tmp/wick-vault.bak
+wick vault audit
 # or: wick act fill 'css=input[type=password]' 'vault://mysite/password'
 
 # Act (Chromium — heavy contact)
+wick start --engine chromium --headed   # window on the current DISPLAY
+# WICK_HEADED=1 wick start --engine chromium
 wick act goto URL
 wick act click 'role=link[name="More information"]'   # role= hints from snap/plan/ask
 wick act click "css=button.submit"
@@ -108,14 +123,11 @@ wick metrics
 wick doctor | version | status
 ```
 
-## Engines
+## Engine
 
-| Engine | Role | Port (loopback) |
-|--------|------|------------------|
-| **Lightpanda** (default) | Fetch, markdown, tree, shields | `9333` |
-| **Chromium** (Playwright) | Clicks, tabs, PDF, screenshots | `9222` |
+Wick is **standalone Chromium** (Playwright). Observe (`snap` / `plan` / `ask` / `open`) and act (`click` / `fill` / `login` / `cu`) share one loopback CDP (`WICK_CHROME_PORT`, default `9222`).
 
-Lightpanda is **AGPL** third-party software invoked as an external binary — not vendored into this MIT repo. Chromium comes via Playwright into a local venv.
+Lightpanda is not required. `WICK_ENGINE=lightpanda` is an opt-in leftover for operators who already have that binary.
 
 ## Configuration (env)
 
@@ -138,8 +150,13 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_APPROVE` | — | Harness-granted actions (`login`, `passkey`, `*`) |
 | `WICK_POLICY` | `$WICK_HOME/policy.json` | Policy file: host allow/deny, profile, approvals, vault grant (env wins; deny unions) |
 | `WICK_VAULT_REQUIRE_GRANT` | `0` | Deny vault resolve/fill unless `wick vault grant --url` is active |
+| `WICK_VAULT_STRICT` | `0` | Grant-required **and** relock after fill (standing file keys stay off the fill path) |
 | `WICK_HALT_ON_CHALLENGE` | `1` | Halt vault login/secret fill/passkey on a CAPTCHA/bot-wall |
 | `WICK_CHALLENGE_COMPUTER_USE` | `0` | Allow `cu` / click / type on a challenge (desktop Hermes / Grokbot). Secrets stay blocked. Auto-on when headed or an XDG user seat. |
+| `WICK_HEADED` | `0` | Headed Chromium on the current `DISPLAY` (`wick start --headed`). `DISPLAY` alone is not enough. |
+| `WICK_HEADLESS` | `1` | Set `0` for the same headed desktop launch. `--xvfb` still starts a virtual X server. |
+| `WICK_CHROME_NO_SANDBOX` | `0` | Add `--no-sandbox` when the host user-namespace sandbox cannot start. |
+| `WICK_ENGINE` | `chromium` | Standalone default. `lightpanda` is opt-in only. `auto` means Chromium. |
 | `WICK_WEBRTC_IP_GUARD` | `1` | Chromium: no LAN ICE candidates |
 | `WICK_REDUCE_CLIENT_HINTS` | `1` | Drop User-Agent Client Hints (privacy, not UA spoof) |
 | `WICK_PASSKEY_REQUIRE_HSM` | `0` | Refuse passkey create unless a TPM/PKCS#11 token is present |
@@ -180,7 +197,7 @@ wick-browser/
 
 ## License
 
-MIT for Wick orchestration. Optional Lightpanda engine is AGPL — see [LICENSE](LICENSE).
+MIT for Wick orchestration. Chromium / Playwright keep their own licenses. An optional Lightpanda binary (if you set `WICK_ENGINE=lightpanda`) is AGPL — see [LICENSE](LICENSE).
 
 ## Contributing
 

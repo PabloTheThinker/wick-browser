@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Wick — free agent browser for AI agents and automation.
+"""Wick — standalone agent browser (Chromium).
 
-A thin flame for machines. MIT orchestration layer.
-Optional engines: Lightpanda binary (AGPL, external) · Chromium headless-shell.
+MIT orchestration + Playwright Chromium. One JSON surface.
+Lightpanda is opt-in only (WICK_ENGINE=lightpanda).
 
 No paid API. CDP loopback only.
 """
@@ -84,6 +84,22 @@ try:
     import policy as wick_policy
 except Exception:
     wick_policy = None  # type: ignore
+try:
+    import challenge as wick_challenge
+except Exception:
+    wick_challenge = None  # type: ignore
+try:
+    import agent_skill as wick_agent_skill
+except Exception:
+    wick_agent_skill = None  # type: ignore
+try:
+    import page_read as wick_page_read
+except Exception:
+    wick_page_read = None  # type: ignore
+try:
+    import cli_catalog as wick_cli_catalog
+except Exception:
+    wick_cli_catalog = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -106,7 +122,8 @@ MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 CHROME_PORT = int(os.environ.get("WICK_CHROME_PORT", "9222"))
 LP_PORT = int(os.environ.get("WICK_LP_PORT", "9333"))
-DEFAULT_ENGINE = os.environ.get("WICK_ENGINE", "auto")  # auto|lightpanda|chromium
+# Standalone Wick is Chromium. Lightpanda is opt-in only (WICK_ENGINE=lightpanda).
+DEFAULT_ENGINE = os.environ.get("WICK_ENGINE", "chromium")  # chromium|lightpanda|auto
 
 
 def find_lightpanda() -> Path | None:
@@ -185,11 +202,21 @@ def chrome_up() -> bool:
     return cdp_version(CHROME_PORT) is not None
 
 
+def current_engine_pref() -> str:
+    return (os.environ.get("WICK_ENGINE") or "chromium").strip().lower() or "chromium"
+
+
 def resolve_engine(requested: str | None) -> str:
-    eng = requested or DEFAULT_ENGINE
+    """Wick standalone = Chromium. `auto` no longer prefers Lightpanda."""
+    eng = (requested or current_engine_pref() or "chromium").strip().lower()
     if eng == "auto":
-        return "lightpanda" if find_lightpanda() else "chromium"
+        return "chromium"
     return eng
+
+
+def observe_uses_lightpanda() -> bool:
+    """True only when the operator explicitly asked for Lightpanda and it exists."""
+    return resolve_engine(None) == "lightpanda" and find_lightpanda() is not None
 
 
 def disk_usage(path: Path) -> str:
@@ -327,8 +354,37 @@ def start_lp() -> dict:
     return {"ok": False, "product": "wick", "error": "lp_timeout", "pid": proc.pid}
 
 
-def start_chrome(xvfb: bool = False) -> dict:
+def chrome_launch_mode(xvfb: bool = False, headed: bool = False) -> tuple[str, str]:
+    """How Chromium should start.
+
+    --xvfb: headed on a new virtual X server (CI).
+    --headed / WICK_HEADED=1 / WICK_HEADLESS=0: headed on the current DISPLAY.
+    Else: headless. DISPLAY alone is not enough (Xvfb also sets DISPLAY).
+    """
+    if xvfb:
+        return "0", "1"
+    headed_flag = headed
+    env_headed = (os.environ.get("WICK_HEADED") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    headless_off = (os.environ.get("WICK_HEADLESS") or "").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    if headed_flag or env_headed or headless_off:
+        return "0", "0"
+    return "1", "0"
+
+
+def start_chrome(xvfb: bool = False, headed: bool = False) -> dict:
     ensure()
+    headless_s, xvfb_s = chrome_launch_mode(xvfb=xvfb, headed=headed)
+    is_headed = headless_s == "0"
     if chrome_up():
         v = cdp_version(CHROME_PORT) or {}
         return {
@@ -338,6 +394,9 @@ def start_chrome(xvfb: bool = False) -> dict:
             "engine": "chromium",
             "cdp": f"http://127.0.0.1:{CHROME_PORT}",
             "browser": v.get("Browser"),
+            "headed": is_headed,
+            "xvfb": xvfb_s == "1",
+            "display": os.environ.get("DISPLAY") or "",
         }
     if not VENV_PY.exists():
         return {
@@ -349,8 +408,8 @@ def start_chrome(xvfb: bool = False) -> dict:
     env = os.environ.copy()
     env["WICK_HOME"] = str(HOME)
     env["WICK_CHROME_PORT"] = str(CHROME_PORT)
-    env["WICK_HEADLESS"] = "0" if xvfb else "1"
-    env["WICK_XVFB"] = "1" if xvfb else "0"
+    env["WICK_HEADLESS"] = headless_s
+    env["WICK_XVFB"] = xvfb_s
     # per-session Chromium profile + downloads (regular-browser isolation)
     sess = os.environ.get("WICK_SESSION", "default")
     if wick_shields is not None:
@@ -382,6 +441,9 @@ def start_chrome(xvfb: bool = False) -> dict:
                 "cdp": f"http://127.0.0.1:{CHROME_PORT}",
                 "browser": v.get("Browser"),
                 "started": time.time(),
+                "headed": is_headed,
+                "xvfb": xvfb_s == "1",
+                "display": env.get("DISPLAY") or "",
             }
             (STATE / "chromium.json").write_text(json.dumps(meta, indent=2) + "\n")
             return {"ok": True, "product": "wick", **meta}
@@ -407,6 +469,89 @@ def stop_one(name: str, port: int) -> dict:
         "port_clear": cdp_version(port) is None,
     }
 
+
+
+def _is_here_observe(url: str | None) -> bool:
+    if wick_origins is not None:
+        return wick_origins.is_here_url(url)
+    s = str(url or "").strip()
+    return s == "" or s in {".", "here", "--here"}
+
+
+def chrome_observe_fetch(
+    url: str,
+    dump: str = "markdown",
+    max_chars: int = 12000,
+    wait_ms: int = 2000,
+) -> dict:
+    """Standalone observe: Chromium extracts title, excerpt, links, role= hints."""
+    here = _is_here_observe(url)
+    if here and not chrome_up():
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "no_current_page",
+            "hint": "wick act goto URL first, then wick snap (no URL)",
+        }
+    if not VENV_PY.exists():
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "chromium_venv_missing",
+            "hint": "wick install-engine, or python3 -m venv .venv && .venv/bin/playwright install chromium",
+        }
+    if not chrome_up():
+        st = start_chrome()
+        if not st.get("ok"):
+            return {
+                "ok": False,
+                "product": "wick",
+                "error": "observe_engine_missing",
+                "lightpanda": False,
+                "chromium": st,
+                "hint": "wick install-engine or wick start --engine chromium",
+            }
+    env = os.environ.copy()
+    env["WICK_CHROME_PORT"] = str(CHROME_PORT)
+    env["WICK_HOME"] = str(HOME)
+    t0 = time.time()
+    observe_url = "here" if here else url
+    try:
+        proc = subprocess.run(
+            [
+                str(VENV_PY),
+                str(ROOT / "lib" / "chrome_actions.py"),
+                "observe",
+                observe_url,
+                dump or "markdown",
+                str(int(max_chars or 12000)),
+                str(int(wait_ms or 2000)),
+            ],
+            env=env,
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "product": "wick", "error": "chrome_observe_timeout"}
+    try:
+        out = json.loads((proc.stdout or "").strip() or "{}")
+    except Exception:
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "bad_observe_json",
+            "stdout": (proc.stdout or "")[:200],
+        }
+    if not isinstance(out, dict):
+        return {"ok": False, "product": "wick", "error": "bad_observe_json"}
+    out.setdefault("product", "wick")
+    out.setdefault("engine", "chromium")
+    out.setdefault("ms", int((time.time() - t0) * 1000))
+    if proc.returncode != 0 and out.get("ok") is not False:
+        out["ok"] = False
+    return out
 
 
 def lp_fetch(
@@ -460,9 +605,36 @@ def lp_fetch(
             if herr:
                 return herr
 
+    wait = 2000 if wait_ms is None else wait_ms
+    if not observe_uses_lightpanda():
+        if len(urls) == 1:
+            return chrome_observe_fetch(
+                urls[0],
+                dump=dump,
+                max_chars=max_chars,
+                wait_ms=wait,
+            )
+        results = [
+            chrome_observe_fetch(u, dump=dump, max_chars=max_chars, wait_ms=wait)
+            for u in urls
+        ]
+        return {
+            "ok": all(bool(r.get("ok")) for r in results),
+            "product": "wick",
+            "engine": "chromium",
+            "batch": True,
+            "count": len(results),
+            "results": results,
+        }
+
     lp_bin = find_lightpanda()
     if not lp_bin:
-        return {"ok": False, "product": "wick", "error": "lightpanda_not_found"}
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "lightpanda_not_found",
+            "hint": "Wick standalone uses Chromium. Unset WICK_ENGINE=lightpanda, or install a Lightpanda binary.",
+        }
 
     ensure()
     cmd: list[str] = [str(lp_bin), "fetch", *urls, "--json"]
@@ -644,58 +816,44 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     print(f"home: {HOME} mode={home_mode}")
     print(f"disk: {disk_usage(HOME)}")
     print(f"root: {ROOT}")
-    print(f"lightpanda: {lp_bin}")
+    print(f"engine: chromium (standalone)")
+    print(f"venv: {VENV_PY.exists()}")
+    print(f"chrome_cdp:{CHROME_PORT} up={chrome_up()}")
+    print(f"default_engine: {resolve_engine(None)}")
+    print(f"lightpanda: {lp_bin or 'unused'} (opt-in only: WICK_ENGINE=lightpanda)")
     print(
         "lightpanda_symlink: "
         f"path={sym.get('path')} is_symlink={sym.get('is_symlink')} "
         f"target={sym.get('target')} resolves={sym.get('resolves')}"
     )
-    print(f"venv: {VENV_PY.exists()}")
     print(f"lp_cdp:{LP_PORT} up={lp_up()}")
-    print(f"chrome_cdp:{CHROME_PORT} up={chrome_up()}")
-    print(f"default_engine: {resolve_engine(None)}")
-    print("license_layer: MIT (orchestration layer) · optional Lightpanda binary is AGPL third-party")
+    print("license_layer: MIT (orchestration + Chromium via Playwright)")
     print("paid: no")
     return 0
 
 
 def cmd_ensure(_: argparse.Namespace) -> int:
-    """Start Lightpanda if binary exists; no-op if already up. Never starts Chromium."""
+    """Start standalone Chromium if it is not already up."""
     ensure()
-    lp_bin = find_lightpanda()
-    if not lp_bin:
+    if chrome_up():
+        v = cdp_version(CHROME_PORT) or {}
         print(
             json.dumps(
                 {
                     "ok": True,
                     "product": "wick",
                     "action": "noop",
-                    "lightpanda": "absent",
-                    "chromium": "not_started",
-                    "hint": "wick install-engine to enable light engine",
-                }
-            )
-        )
-        return 0
-    if lp_up():
-        v = cdp_version(LP_PORT) or {}
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "product": "wick",
-                    "action": "noop",
-                    "lightpanda": "up",
-                    "cdp": f"http://127.0.0.1:{LP_PORT}",
+                    "engine": "chromium",
+                    "chromium": "up",
+                    "cdp": f"http://127.0.0.1:{CHROME_PORT}",
                     "browser": v.get("Browser"),
-                    "chromium": "not_started",
                 }
             )
         )
         return 0
-    r = start_lp()
+    r = start_chrome()
     r["action"] = "started" if r.get("ok") and not r.get("already") else ("noop" if r.get("already") else "failed")
-    r["chromium"] = "not_started"
+    r["engine"] = "chromium"
     print(json.dumps(r))
     return 0 if r.get("ok") else 1
 
@@ -703,9 +861,23 @@ def cmd_ensure(_: argparse.Namespace) -> int:
 def cmd_start(args: argparse.Namespace) -> int:
     eng = resolve_engine(args.engine)
     if eng == "both":
-        print(json.dumps({"product": "wick", "lightpanda": start_lp(), "chromium": start_chrome(args.xvfb)}))
+        print(
+            json.dumps(
+                {
+                    "product": "wick",
+                    "lightpanda": start_lp(),
+                    "chromium": start_chrome(
+                        xvfb=args.xvfb, headed=getattr(args, "headed", False)
+                    ),
+                }
+            )
+        )
         return 0
-    r = start_lp() if eng == "lightpanda" else start_chrome(args.xvfb)
+    r = (
+        start_lp()
+        if eng == "lightpanda"
+        else start_chrome(xvfb=args.xvfb, headed=getattr(args, "headed", False))
+    )
     print(json.dumps(r))
     return 0 if r.get("ok") else 1
 
@@ -773,54 +945,49 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
-    lp_bin = find_lightpanda()
-    if lp_bin:
-        _kw = dict(
-            dump=args.dump,
-            max_chars=args.max,
-            wait_until=getattr(args, "wait_until", "load") or "load",
-            wait_ms=getattr(args, "wait_ms", 1500),
-            wait_selector=getattr(args, "wait_selector", None),
-            strip=[] if getattr(args, "no_strip", False) else _observe_strip(no_strip=False),
-        )
-        if getattr(args, "fast", False):
-            _kw["wait_until"] = "domcontentloaded"
-            _kw["wait_ms"] = min(int(_kw["wait_ms"] or 1500), 1200)
-        r = lp_fetch(args.url, **_kw)
-        if r.get("ok") and getattr(args, "stats", False) and wick_stats is not None:
-            def _build(cmd):
-                if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
-                    wick_shields.append_lp_shield_args(
-                        cmd, shields=True,
-                        session=os.environ.get("WICK_SESSION", "default"),
-                        block_private=False,
-                    )
-                    wick_shields.append_privacy_headers(cmd)
-            try:
-                lp_bin = find_lightpanda()
-                r["stats"] = wick_stats.metrics_pass(
-                    lp_bin, args.url,
-                    build_shield_cmd=_build,
-                    wait_ms=int(_kw["wait_ms"] or 1500),
-                    wait_until=_kw["wait_until"] or "load",
+    _kw = dict(
+        dump=args.dump,
+        max_chars=args.max,
+        wait_until=getattr(args, "wait_until", "load") or "load",
+        wait_ms=getattr(args, "wait_ms", 1500),
+        wait_selector=getattr(args, "wait_selector", None),
+        strip=[] if getattr(args, "no_strip", False) else _observe_strip(no_strip=False),
+    )
+    if getattr(args, "fast", False):
+        _kw["wait_until"] = "domcontentloaded"
+        _kw["wait_ms"] = min(int(_kw["wait_ms"] or 1500), 1200)
+    r = lp_fetch(args.url, **_kw)
+    if (
+        r.get("ok")
+        and getattr(args, "stats", False)
+        and wick_stats is not None
+        and observe_uses_lightpanda()
+    ):
+        def _build(cmd):
+            if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
+                wick_shields.append_lp_shield_args(
+                    cmd, shields=True,
+                    session=os.environ.get("WICK_SESSION", "default"),
+                    block_private=False,
                 )
-            except Exception as e:
-                r["stats_error"] = str(e)[:160]
-        if r.get("ok") and getattr(args, "save_session", False) and wick_shields is not None:
-            try:
-                r["session_saved"] = wick_shields.promote_jar_to_load(
-                    os.environ.get("WICK_SESSION", "default")
-                )
-            except Exception as e:
-                r["session_saved"] = {"ok": False, "error": str(e)[:120]}
-    else:
-        if run_pw("action_goto.py", args.url) != 0:
-            return 1
-        env = os.environ.copy()
-        env["WICK_CHROME_PORT"] = str(CHROME_PORT)
-        out = subprocess.check_output([str(VENV_PY), str(ROOT / "lib" / "action_text.py"), str(args.max)], env=env)
-        r = json.loads(out.decode())
-        r["engine"] = "chromium"
+                wick_shields.append_privacy_headers(cmd)
+        try:
+            lp_bin = find_lightpanda()
+            r["stats"] = wick_stats.metrics_pass(
+                lp_bin, args.url,
+                build_shield_cmd=_build,
+                wait_ms=int(_kw["wait_ms"] or 1500),
+                wait_until=_kw["wait_until"] or "load",
+            )
+        except Exception as e:
+            r["stats_error"] = str(e)[:160]
+    if r.get("ok") and getattr(args, "save_session", False) and wick_shields is not None:
+        try:
+            r["session_saved"] = wick_shields.promote_jar_to_load(
+                os.environ.get("WICK_SESSION", "default")
+            )
+        except Exception as e:
+            r["session_saved"] = {"ok": False, "error": str(e)[:120]}
     r["product"] = "wick"
     if not r.get("ok") and "error" in r:
         print(json.dumps(r, ensure_ascii=False))
@@ -914,6 +1081,16 @@ def cmd_metrics(_: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "product": "wick", "error": "metrics_unavailable", "detail": str(e), "hint": "wick ensure"}))
         return 1
 
+
+
+def cmd_challenge(args: argparse.Namespace) -> int:
+    """Observe-only human-challenge detect. Never logs in. Never solves."""
+    if wick_challenge is None:
+        print(json.dumps({"ok": False, "error": "challenge_module_missing", "login": False, "solves": False}))
+        return 1
+    out = wick_challenge.probe(getattr(args, "url", "") or "")
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
@@ -1227,6 +1404,27 @@ def _resolve_act_rest(action: str, rest: list[str]) -> tuple[list[str] | None, d
     return list(rest), None
 
 
+def _invalidate_observe_cache() -> None:
+    if wick_observe_cache is None:
+        return
+    try:
+        wick_observe_cache.clear()
+    except Exception:
+        pass
+
+
+def _cli_observe_url(args: argparse.Namespace) -> str:
+    if getattr(args, "here", False):
+        return ""
+    return str(getattr(args, "url", None) or "").strip()
+
+
+def _rpc_observe_url(args: dict) -> str:
+    if args.get("here"):
+        return ""
+    return str(args.get("url") or "").strip()
+
+
 def cmd_act(args: argparse.Namespace) -> int:
     """Browser-Use-shaped Chromium actions (goto/click/fill/press/wait/eval/content)."""
     if not chrome_up():
@@ -1235,6 +1433,10 @@ def cmd_act(args: argparse.Namespace) -> int:
             print(json.dumps(st))
             return 1
     rest = list(args.rest or [])
+    if getattr(args, "after_challenge", None) is not None:
+        rest += ["--after-challenge", str(int(args.after_challenge))]
+    if getattr(args, "no_submit", False):
+        rest += ["--no-submit"]
     if getattr(args, "expect_url_fragment", None):
         rest += ["--expect-url-fragment", args.expect_url_fragment]
     if getattr(args, "expect_element", None):
@@ -1260,8 +1462,13 @@ def cmd_act(args: argparse.Namespace) -> int:
         if "filled" in result:
             result["filled"] = rest[0] if rest else result.get("filled")
         print(json.dumps(result, ensure_ascii=False))
+        if result.get("ok"):
+            _invalidate_observe_cache()
         return 0 if result.get("ok") else 1
-    return subprocess.call(cmd, env=env, cwd=str(ROOT))
+    rc = subprocess.call(cmd, env=env, cwd=str(ROOT))
+    if rc == 0:
+        _invalidate_observe_cache()
+    return rc
 
 
 def cmd_vault(args: argparse.Namespace) -> int:
@@ -1396,6 +1603,45 @@ def cmd_vault(args: argparse.Namespace) -> int:
             )
             return 2
         out = wick_vault.create_passkey(name, url=url, username=getattr(args, "username", None))
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "audit":
+        print(json.dumps(wick_vault.read_audit(limit=int(getattr(args, "limit", None) or 50)), ensure_ascii=False))
+        return 0
+    if act == "backup":
+        dest = getattr(args, "dest", None) or getattr(args, "name", None) or ""
+        if not dest:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_dest",
+                        "hint": "WICK_VAULT_BACKUP_PASSPHRASE=… wick vault backup PATH",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.backup(dest)
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "harden":
+        out = wick_vault.harden()
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if out.get("ok") else 1
+    if act == "restore":
+        src = getattr(args, "src", None) or getattr(args, "name", None) or ""
+        if not src:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_src",
+                        "hint": "WICK_VAULT_BACKUP_PASSPHRASE=… wick vault restore PATH",
+                    }
+                )
+            )
+            return 2
+        out = wick_vault.restore(src, force=bool(getattr(args, "force", False)))
         print(json.dumps(out, ensure_ascii=False))
         return 0 if out.get("ok") else 1
     print(json.dumps({"ok": False, "error": f"unknown_vault_action:{act}"}))
@@ -1547,6 +1793,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                         rest.append(step["url"])
                     if step.get("no_submit") or step.get("submit") is False:
                         rest.append("--no-submit")
+                    ac = step.get("after_challenge")
+                    if ac:
+                        rest.append("--after-challenge")
+                        if isinstance(ac, (int, float)) and not isinstance(ac, bool):
+                            rest.append(str(int(ac)))
+                        elif step.get("after_challenge_ms"):
+                            rest.append(str(int(step["after_challenge_ms"])))
                 elif act in ("passkey", "passkey_register"):
                     rest = []
                     if step.get("url"):
@@ -1877,6 +2130,116 @@ def _apply_profile(
     }
 
 
+def _gather_snap_chromium(
+    url: str,
+    *,
+    max_chars: int,
+    excerpt_len: int,
+    elements_limit: int,
+    link_limit: int,
+    wait_ms: int,
+    t0: float,
+    prof: str | None,
+    cache_key,
+) -> dict:
+    """One Chromium observe. Parallel tree+markdown races the shared page."""
+    obs = chrome_observe_fetch(
+        url,
+        dump="markdown",
+        max_chars=max_chars,
+        wait_ms=wait_ms,
+    )
+    if not obs.get("ok"):
+        return obs
+    text = obs.get("content") or ""
+    links = [lnk for lnk in (obs.get("links") or []) if isinstance(lnk, dict)]
+    if not links:
+        links = extract_md_links(text)
+    elements = [el for el in (obs.get("elements") or []) if isinstance(el, dict)]
+    if wick_elements is not None:
+        for el in elements:
+            role = str(el.get("role") or "")
+            name = str(el.get("name") or "")
+            if role and name:
+                el["hint"] = wick_elements._hint(role, name)
+            elif not el.get("hint") and name:
+                el["hint"] = f'role={role}[name="{name}"]'
+        elements = wick_elements.interactive_only(elements, limit=elements_limit)
+    else:
+        elements = elements[:elements_limit]
+    excerpt = re.sub(r"\s+", " ", (obs.get("excerpt") or "")).strip()
+    if not excerpt:
+        excerpt = re.sub(r"\s+", " ", text).strip()
+    title = str(obs.get("title") or "")
+    if not title:
+        for line in text.splitlines():
+            s = line.strip()
+            if s.startswith("# "):
+                title = s[2:].strip()
+                break
+    gathered = {
+        "ok": True,
+        "product": "wick",
+        "version": VERSION,
+        "url": obs.get("url") or url,
+        "http_status": obs.get("http_status"),
+        "http_ok": obs.get("http_ok"),
+        "title": title,
+        "ms": obs.get("ms") or 0,
+        "chars": obs.get("chars") or len(text),
+        "excerpt": excerpt[:excerpt_len],
+        "markdown": text,
+        "link_count": len(links),
+        "links": links[:link_limit],
+        "links_all": links,
+        "elements": elements,
+        "element_count": len(elements),
+        "tree_chars": None,
+        "fast": False,
+        "engine": obs.get("engine") or "chromium",
+        "profile": prof,
+        "reused": bool(obs.get("reused")),
+        "kind": obs.get("kind"),
+        "headings": [h for h in (obs.get("headings") or []) if isinstance(h, dict)],
+        "paragraphs": [p for p in (obs.get("paragraphs") or []) if isinstance(p, (str, dict))],
+        "sections": [s for s in (obs.get("sections") or []) if isinstance(s, dict)],
+        "text": obs.get("text") or "",
+        "timing": {
+            "total_ms": int((time.time() - t0) * 1000),
+            "tree_ms": 0,
+            "md_ms": obs.get("ms") or 0,
+            "cache": False,
+            "profile": prof,
+            "parallel": False,
+            "engine": "chromium",
+            "reused": bool(obs.get("reused")),
+        },
+    }
+    gathered = _apply_page_read(gathered, excerpt_len=excerpt_len, include_paragraphs=True)
+    if wick_observe_cache is not None and cache_key:
+        wick_observe_cache.put(cache_key, gathered)
+    return gathered
+
+
+def _apply_page_read(
+    gathered: dict,
+    *,
+    excerpt_len: int,
+    include_paragraphs: bool = False,
+) -> dict:
+    if wick_page_read is None or not gathered.get("ok"):
+        return gathered
+    shaped = wick_page_read.shape_observe(gathered, excerpt_len=excerpt_len)
+    gathered["kind"] = shaped["kind"]
+    gathered["headings"] = shaped["headings"]
+    gathered["sections"] = shaped.get("sections") or []
+    if include_paragraphs:
+        gathered["paragraphs"] = shaped["paragraphs"]
+    if shaped.get("excerpt"):
+        gathered["excerpt"] = shaped["excerpt"][:excerpt_len]
+    return gathered
+
+
 def _gather_snap(
     url: str,
     *,
@@ -1921,8 +2284,17 @@ def _gather_snap(
     md_max = min(max_chars, 8000) if fast else max_chars
     tree_cap = min(tree_max, 40000) if fast else tree_max
 
+    here = _is_here_observe(url)
+    if here and observe_uses_lightpanda():
+        return {
+            "ok": False,
+            "product": "wick",
+            "error": "here_requires_chromium",
+            "hint": "here-snap is Chromium-only. Unset WICK_ENGINE=lightpanda.",
+        }
+
     cache_key = None
-    if wick_observe_cache is not None:
+    if wick_observe_cache is not None and not here:
         cache_key = wick_observe_cache.cache_key(
             url=url,
             fast=bool(fast),
@@ -1940,6 +2312,18 @@ def _gather_snap(
             return hit
 
     t0 = time.time()
+    if not observe_uses_lightpanda():
+        return _gather_snap_chromium(
+            url,
+            max_chars=md_max,
+            excerpt_len=excerpt_len,
+            elements_limit=elements_limit,
+            link_limit=link_limit,
+            wait_ms=wait,
+            t0=t0,
+            prof=prof,
+            cache_key=cache_key,
+        )
     fetch_kw = dict(wait_until=wu, wait_ms=wait, strip=strips)
 
     def _tree():
@@ -2011,6 +2395,10 @@ def _gather_snap(
                     "parallel": False,
                 },
             }
+            if tree_r.get("engine"):
+                tree_only["engine"] = tree_r["engine"]
+            if tree_r.get("fallback"):
+                tree_only["fallback"] = tree_r["fallback"]
             if wick_observe_cache is not None and cache_key:
                 wick_observe_cache.put(cache_key, tree_only)
             return tree_only
@@ -2055,6 +2443,12 @@ def _gather_snap(
             "parallel": not skip_markdown,
         },
     }
+    engine = md.get("engine") or tree_r.get("engine")
+    if engine:
+        gathered["engine"] = engine
+    fallback = md.get("fallback") or tree_r.get("fallback")
+    if fallback:
+        gathered["fallback"] = fallback
     if skip_markdown:
         gathered["tree_only"] = True
         excerpt_bits = [tree_title or ""] + [
@@ -2065,6 +2459,7 @@ def _gather_snap(
         gathered["link_count"] = 0
         gathered["links"] = []
         gathered["links_all"] = []
+    gathered = _apply_page_read(gathered, excerpt_len=excerpt_len, include_paragraphs=True)
     if wick_observe_cache is not None and cache_key:
         wick_observe_cache.put(cache_key, gathered)
     return gathered
@@ -2116,13 +2511,32 @@ def snap_payload(
     )
     if not snap.get("ok"):
         return snap
+    reused = bool(snap.get("reused"))
+    if wick_page_read is not None:
+        shaped = wick_page_read.shape_observe(snap, excerpt_len=excerpt_len)
+        snap["kind"] = shaped["kind"]
+        snap["headings"] = shaped["headings"]
+        if shaped.get("excerpt"):
+            snap["excerpt"] = shaped["excerpt"][:excerpt_len]
+    kind = snap.get("kind") or "generic"
+    hint = (
+        f"kind={kind}. Use THIS snap's elements[].hint with wick act click/fill. "
+        "Need the prose? wick read [--q terms] (no URL). After a click: wick snap. "
+        "Search: fill the searchbox hint, then wick act press Enter."
+    )
+    if reused:
+        hint = "Current Chromium page reused (no goto). " + hint
+    elif _is_here_observe(url):
+        hint = "Snap of the current page. " + hint
     out = {
         **snap,
         "mode": "agent_snap",
-        "hint": "Use elements[].hint with wick act click/fill on Chromium path; or wick open for full markdown.",
+        "hint": hint,
     }
     if not full:
         out.pop("markdown", None)
+        out.pop("paragraphs", None)
+        out.pop("text", None)
     out.pop("links_all", None)
     return _annotate_observe(out)
 
@@ -2139,6 +2553,9 @@ def snap_many_payload(
     if not cleaned:
         return {"ok": False, "product": "wick", "error": "no_url"}
     conc = max(1, min(int(concurrency or 4), 8))
+    # One Chromium page — parallel snaps race the shared daemon.
+    if not observe_uses_lightpanda():
+        conc = 1
     from concurrent.futures import ThreadPoolExecutor
 
     results: list[dict] = [{} for _ in cleaned]
@@ -2181,7 +2598,7 @@ def cmd_snap_many(args: argparse.Namespace) -> int:
 def cmd_snap(args: argparse.Namespace) -> int:
     """One-shot agent snapshot: status, title, markdown, links, interactive elements."""
     out = snap_payload(
-        args.url,
+        _cli_observe_url(args),
         max_chars=args.max,
         excerpt_len=args.excerpt,
         elements_limit=args.elements,
@@ -2206,8 +2623,9 @@ def cmd_snap(args: argparse.Namespace) -> int:
 
 def cmd_plan(args: argparse.Namespace) -> int:
     """Goal-agnostic action suggestions from snap (open, click hints, screenshot, …)."""
+    target = _cli_observe_url(args)
     snap = _gather_snap(
-        args.url,
+        target,
         max_chars=args.max,
         excerpt_len=args.excerpt,
         elements_limit=args.elements,
@@ -2225,25 +2643,30 @@ def cmd_plan(args: argparse.Namespace) -> int:
     suggestions = []
     if wick_elements is not None:
         suggestions = wick_elements.plan_suggestions(
-            url=snap.get("url") or args.url,
+            url=snap.get("url") or target,
             title=snap.get("title"),
             excerpt=snap.get("excerpt") or "",
             links=snap.get("links_all") or snap.get("links") or [],
             elements=snap.get("elements") or [],
             click_limit=args.click_limit,
+            kind=snap.get("kind"),
+            headings=snap.get("headings"),
         )
     out = {
         "ok": True,
         "product": "wick",
         "version": VERSION,
         "mode": "agent_plan",
-        "url": snap.get("url") or args.url,
+        "url": snap.get("url") or target,
         "http_ok": snap.get("http_ok"),
         "title": snap.get("title"),
         "excerpt": snap.get("excerpt"),
+        "kind": snap.get("kind"),
+        "headings": snap.get("headings") or [],
         "element_count": snap.get("element_count"),
         "link_count": snap.get("link_count"),
         "ms": snap.get("ms"),
+        "reused": bool(snap.get("reused")),
         "suggestions": suggestions,
         "hint": "Suggestions are goal-agnostic; pick actions matching your task.",
         "strip": snap.get("strip"),
@@ -2261,8 +2684,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if not args.q:
         print(json.dumps({"ok": False, "product": "wick", "error": "missing_query", "hint": "wick ask URL --q \"search terms\""}))
         return 2
+    target = _cli_observe_url(args)
     snap = _gather_snap(
-        args.url,
+        target,
         max_chars=args.max,
         excerpt_len=args.excerpt,
         elements_limit=args.elements,
@@ -2292,7 +2716,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "product": "wick",
         "version": VERSION,
         "mode": "agent_ask",
-        "url": snap.get("url") or args.url,
+        "url": snap.get("url") or target,
         "http_ok": snap.get("http_ok"),
         "title": snap.get("title"),
         "query": args.q,
@@ -2305,7 +2729,18 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "link_count": len(matched_links),
         "elements": matched_elements,
         "element_count": len(matched_elements),
-        "hint": "Matches are substring word hits on name/href/excerpt — no LLM.",
+        "headings": (
+            wick_page_read.filter_headings(snap.get("headings") or [], args.q)
+            if wick_page_read is not None
+            else []
+        ),
+        "paragraphs": (
+            wick_page_read.filter_paragraphs(snap.get("paragraphs") or [], args.q)
+            if wick_page_read is not None
+            else []
+        ),
+        "kind": snap.get("kind"),
+        "hint": "Matches are substring word hits on name/href/excerpt/headings/paragraphs — no LLM.",
         "strip": snap.get("strip"),
     }
     out = _annotate_observe(out)
@@ -2349,6 +2784,41 @@ def cmd_elements(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_read(args: argparse.Namespace) -> int:
+    """Structured page read: kind, headings, paragraphs (not a markdown dump)."""
+    if wick_page_read is None:
+        print(json.dumps({"ok": False, "error": "page_read_module_missing"}))
+        return 1
+    snap = _gather_snap(
+        _cli_observe_url(args),
+        max_chars=int(getattr(args, "max", 12000) or 12000),
+        excerpt_len=int(getattr(args, "excerpt", 1200) or 1200),
+        elements_limit=int(getattr(args, "elements", 20) or 20),
+        link_limit=int(getattr(args, "link_limit", 15) or 15),
+        tree_max=int(getattr(args, "tree_max", 60000) or 60000),
+        wait_until=getattr(args, "wait_until", None) or "load",
+        wait_ms=int(getattr(args, "wait_ms", 2000) or 2000),
+        fast=bool(getattr(args, "fast", False)),
+        no_strip=bool(getattr(args, "no_strip", False)),
+        profile=getattr(args, "profile", None) or "default",
+    )
+    out = wick_page_read.read_payload(
+        snap,
+        excerpt_len=int(getattr(args, "excerpt", 1200) or 1200),
+        query=getattr(args, "q", None) or "",
+        section=getattr(args, "section", None) or "",
+    )
+    if not out.get("ok"):
+        print(json.dumps(out, ensure_ascii=False))
+        return 1
+    out = _annotate_observe(out)
+    _hist("read", url=out.get("url"), page_kind=out.get("kind"), headings=out.get("heading_count"))
+    print(json.dumps(out, ensure_ascii=False))
+    if getattr(args, "fail_http", False) and not out.get("http_ok"):
+        return 2
+    return 0
+
+
 def cmd_tools(_: argparse.Namespace) -> int:
     """Export OpenAI-style function tool schemas for agent harnesses."""
     if wick_tools_schema is None:
@@ -2358,12 +2828,86 @@ def cmd_tools(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skill(_: argparse.Namespace) -> int:
+    """Compact purpose, loop, and rules for agent harnesses."""
+    if wick_agent_skill is None:
+        print(json.dumps({"ok": False, "error": "agent_skill_missing"}))
+        return 1
+    print(json.dumps(wick_agent_skill.skill_payload(VERSION), ensure_ascii=False))
+    return 0
+
+
+def cmd_commands(_: argparse.Namespace) -> int:
+    """JSON catalog of CLI commands (same coverage as tools/RPC)."""
+    if wick_cli_catalog is None:
+        print(json.dumps({"ok": False, "error": "cli_catalog_missing"}))
+        return 1
+    print(json.dumps(wick_cli_catalog.commands_export(VERSION), ensure_ascii=False))
+    return 0
+
+
+def cmd_help(args: argparse.Namespace) -> int:
+    return cmd_commands(args)
+
+
+def cmd_call(args: argparse.Namespace) -> int:
+    """One-shot RPC via CLI: wick call snap '{json}'."""
+    name = str(getattr(args, "name", None) or "").strip()
+    raw = getattr(args, "payload", None)
+    if not name:
+        return cmd_commands(args)
+    payload: dict = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            print(json.dumps({
+                "ok": False,
+                "product": "wick",
+                "error": "bad_json",
+                "soft": True,
+                "detail": str(e)[:160],
+                "hint": "wick call CMD '{...json object...}'",
+            }, ensure_ascii=False))
+            return 2
+        if not isinstance(parsed, dict):
+            print(json.dumps({
+                "ok": False,
+                "product": "wick",
+                "error": "args_must_be_object",
+                "soft": True,
+            }, ensure_ascii=False))
+            return 2
+        payload = parsed
+    handlers = _rpc_handlers()
+    key = name
+    if wick_cli_catalog is not None:
+        key = wick_cli_catalog.normalize_cmd(name)
+    if key not in handlers and name in handlers:
+        key = name
+    if key == "help":
+        key = "commands"
+    if key not in handlers:
+        print(json.dumps({
+            "ok": False,
+            "product": "wick",
+            "error": "unknown_cmd",
+            "soft": True,
+            "cmd": name,
+            "hint": "wick commands — or wick call snap|read|plan|ask|act|vault|session|…",
+        }, ensure_ascii=False))
+        return 1
+    out = handlers[key](payload)
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
+
+
 def _rpc_handlers() -> dict:
   """Build RPC cmd -> handler map (returns JSON-serializable dicts)."""
 
   def _snap(args: dict) -> dict:
       return snap_payload(
-          args["url"],
+          _rpc_observe_url(args),
           max_chars=int(args.get("max") or 12000),
           excerpt_len=int(args.get("excerpt") or 600),
           elements_limit=int(args.get("elements") or 40),
@@ -2378,8 +2922,9 @@ def _rpc_handlers() -> dict:
       )
 
   def _plan(args: dict) -> dict:
+      target = _rpc_observe_url(args)
       snap = _gather_snap(
-          args["url"],
+          target,
           max_chars=int(args.get("max") or 12000),
           excerpt_len=int(args.get("excerpt") or 600),
           elements_limit=int(args.get("elements") or 40),
@@ -2396,22 +2941,25 @@ def _rpc_handlers() -> dict:
       suggestions = []
       if wick_elements is not None:
           suggestions = wick_elements.plan_suggestions(
-              url=snap.get("url") or args["url"],
+              url=snap.get("url") or target,
               title=snap.get("title"),
               excerpt=snap.get("excerpt") or "",
               links=snap.get("links_all") or snap.get("links") or [],
               elements=snap.get("elements") or [],
               click_limit=int(args.get("click_limit") or 3),
+              kind=snap.get("kind"),
+              headings=snap.get("headings"),
           )
       out = {
           "ok": True,
           "product": "wick",
           "version": VERSION,
           "mode": "agent_plan",
-          "url": snap.get("url") or args["url"],
+          "url": snap.get("url") or target,
           "http_ok": snap.get("http_ok"),
           "title": snap.get("title"),
           "excerpt": snap.get("excerpt"),
+          "reused": bool(snap.get("reused")),
           "suggestions": suggestions,
           "strip": snap.get("strip"),
       }
@@ -2421,8 +2969,9 @@ def _rpc_handlers() -> dict:
       q = args.get("q") or ""
       if not q:
           return {"ok": False, "error": "missing_query"}
+      target = _rpc_observe_url(args)
       snap = _gather_snap(
-          args["url"],
+          target,
           max_chars=int(args.get("max") or 12000),
           excerpt_len=int(args.get("excerpt") or 600),
           elements_limit=int(args.get("elements") or 20),
@@ -2448,12 +2997,23 @@ def _rpc_handlers() -> dict:
           "product": "wick",
           "version": VERSION,
           "mode": "agent_ask",
-          "url": snap.get("url") or args["url"],
+          "url": snap.get("url") or target,
           "http_ok": snap.get("http_ok"),
           "query": q,
           "links": matched_links,
           "elements": matched_elements,
           "excerpt": excerpt if excerpt_score > 0 else None,
+          "headings": (
+              wick_page_read.filter_headings(snap.get("headings") or [], q)
+              if wick_page_read is not None
+              else []
+          ),
+          "paragraphs": (
+              wick_page_read.filter_paragraphs(snap.get("paragraphs") or [], q)
+              if wick_page_read is not None
+              else []
+          ),
+          "kind": snap.get("kind"),
           "strip": snap.get("strip"),
       }
       return _annotate_observe(out)
@@ -2512,6 +3072,15 @@ def _rpc_handlers() -> dict:
           if denied:
               return denied
       rest = [str(x) for x in (args.get("rest") or [])]
+      ac = args.get("after_challenge")
+      if ac:
+          rest.append("--after-challenge")
+          if isinstance(ac, (int, float)) and not isinstance(ac, bool):
+              rest.append(str(int(ac)))
+          elif args.get("after_challenge_ms"):
+              rest.append(str(int(args["after_challenge_ms"])))
+      if args.get("no_submit"):
+          rest.append("--no-submit")
       if args.get("expect_url_fragment"):
           rest += ["--expect-url-fragment", str(args["expect_url_fragment"])]
       if args.get("expect_element"):
@@ -2541,6 +3110,8 @@ def _rpc_handlers() -> dict:
           result["ok"] = False
       if vmeta and vmeta.get("vault_resolved"):
           result["vault"] = {k: vmeta[k] for k in ("ref", "backend", "chars") if k in vmeta}
+      if result.get("ok"):
+          _invalidate_observe_cache()
       return result
 
   def _vault(args: dict) -> dict:
@@ -2586,6 +3157,28 @@ def _rpc_handlers() -> dict:
           if not name or not url:
               return {"ok": False, "error": "missing_name_or_url"}
           return wick_vault.create_passkey(name, url=url, username=args.get("username"))
+      if act == "audit":
+          return wick_vault.read_audit(limit=int(args.get("limit") or 50))
+      if act == "backup":
+          dest = args.get("dest") or args.get("path") or args.get("name") or ""
+          if not dest:
+              return {
+                  "ok": False,
+                  "error": "missing_dest",
+                  "hint": "Set dest/path and WICK_VAULT_BACKUP_PASSPHRASE. Not live sync.",
+              }
+          return wick_vault.backup(dest)
+      if act == "restore":
+          src = args.get("src") or args.get("path") or args.get("name") or ""
+          if not src:
+              return {
+                  "ok": False,
+                  "error": "missing_src",
+                  "hint": "Set src/path and WICK_VAULT_BACKUP_PASSPHRASE. Not live sync.",
+              }
+          return wick_vault.restore(src, force=bool(args.get("force")))
+      if act == "harden":
+          return wick_vault.harden()
       return {"ok": False, "soft": True, "error": f"unknown_vault_action:{act}"}
 
   def _session(args: dict) -> dict:
@@ -2650,6 +3243,47 @@ def _rpc_handlers() -> dict:
           concurrency=int(args.get("concurrency") or 4),
       )
 
+  def _challenge(args: dict) -> dict:
+      if wick_challenge is None:
+          return {"ok": False, "error": "challenge_module_missing"}
+      return wick_challenge.probe(str(args.get("url") or ""))
+
+  def _read(args: dict) -> dict:
+      if wick_page_read is None:
+          return {"ok": False, "error": "page_read_module_missing"}
+      snap = _gather_snap(
+          _rpc_observe_url(args),
+          max_chars=int(args.get("max") or 12000),
+          excerpt_len=int(args.get("excerpt") or 1200),
+          elements_limit=int(args.get("elements") or 20),
+          link_limit=int(args.get("link_limit") or 15),
+          tree_max=int(args.get("tree_max") or 60000),
+          wait_until=args.get("wait_until") or "load",
+          wait_ms=int(args.get("wait_ms") or 2000),
+          fast=bool(args.get("fast") if "fast" in args else True),
+          no_strip=bool(args.get("no_strip")),
+          profile=args.get("profile") or "default",
+      )
+      out = wick_page_read.read_payload(
+          snap,
+          excerpt_len=int(args.get("excerpt") or 1200),
+          query=args.get("q") or args.get("query") or "",
+          section=args.get("section") or "",
+      )
+      if not out.get("ok"):
+          return out
+      return _annotate_observe(out)
+
+  def _skill(_args: dict) -> dict:
+      if wick_agent_skill is None:
+          return {"ok": False, "error": "agent_skill_missing"}
+      return wick_agent_skill.skill_payload(VERSION)
+
+  def _commands(_args: dict) -> dict:
+      if wick_cli_catalog is None:
+          return {"ok": False, "error": "cli_catalog_missing"}
+      return wick_cli_catalog.commands_export(VERSION)
+
   def _version(_args: dict) -> dict:
       return {"ok": True, "product": "wick", "version": VERSION}
 
@@ -2664,6 +3298,10 @@ def _rpc_handlers() -> dict:
       }
 
   return {
+      "skill": _skill,
+      "commands": _commands,
+      "help": _commands,
+      "read": _read,
       "snap": _snap,
       "observe": _snap,
       "plan": _plan,
@@ -2676,6 +3314,7 @@ def _rpc_handlers() -> dict:
       "snap_many": _snap_many,
       "snap-many": _snap_many,
       "tools": _tools,
+      "challenge": _challenge,
       "version": _version,
       "status": _status,
   }
@@ -2774,30 +3413,47 @@ def cmd_prune(_: argparse.Namespace) -> int:
 
 
 def cmd_install_engine(_: argparse.Namespace) -> int:
-    """Download free Lightpanda nightly into engines/ (optional backend)."""
+    """Install Playwright Chromium — the standalone Wick engine."""
     ensure()
-    dest = ENGINES / "lightpanda"
-    url = "https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux"
-    print(json.dumps({"ok": True, "product": "wick", "downloading": url, "dest": str(dest)}))
+    pw = ROOT / ".venv" / "bin" / "playwright"
+    py = VENV_PY if VENV_PY.exists() else Path(sys.executable)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "product": "wick",
+                "engine": "chromium",
+                "installing": "playwright chromium",
+            }
+        )
+    )
     try:
-        subprocess.check_call(["curl", "-fsSL", "-o", str(dest), url])
-        dest.chmod(0o755)
-        link = ROOT / "bin" / "lightpanda"
-        if not link.exists():
-            link.symlink_to(dest)
+        if pw.is_file():
+            subprocess.check_call([str(pw), "install", "chromium"])
+        else:
+            subprocess.check_call([str(py), "-m", "playwright", "install", "chromium"])
         print(
             json.dumps(
                 {
                     "ok": True,
                     "product": "wick",
-                    "path": str(dest),
-                    "version": subprocess.check_output([str(dest), "version"], text=True).strip(),
+                    "engine": "chromium",
+                    "hint": "wick ensure   # start Chromium CDP",
                 }
             )
         )
         return 0
     except Exception as e:
-        print(json.dumps({"ok": False, "product": "wick", "error": str(e)}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "product": "wick",
+                    "error": str(e),
+                    "hint": "python3 -m venv .venv && .venv/bin/pip install playwright && wick install-engine",
+                }
+            )
+        )
         return 1
 
 
@@ -2820,20 +3476,54 @@ def _add_observe_profile(p: argparse.ArgumentParser) -> None:
     )
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(
-        prog="wick",
-        description="Wick — agent browser. Fast. Precise. No paid API. The standard for machine operators.",
+def _add_observe_url(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "url",
+        nargs="?",
+        default="",
+        help="Absolute URL. Omit, pass here, or use --here to snap the current Chromium page.",
     )
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    p.add_argument(
+        "--here",
+        action="store_true",
+        help="Observe the current Chromium page (do not goto)",
+    )
+
+
+class _AgentParser(argparse.ArgumentParser):
+    """Argparse that stays on the JSON contract when an agent mistypes a command."""
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        print(json.dumps({
+            "ok": False,
+            "product": "wick",
+            "error": "cli_error",
+            "soft": True,
+            "hint": (message or "")[:240],
+            "try": ["wick commands", "wick skill", "wick call version"],
+        }, ensure_ascii=False))
+        raise SystemExit(2)
+
+
+def main() -> int:
+    ap = _AgentParser(
+        prog="wick",
+        description="Wick — standalone Chromium browser for agents. snap → plan → act. One JSON surface.",
+    )
+    sub = ap.add_subparsers(dest="cmd", required=False)
 
     sub.add_parser("version", help="Print wick version and engine status")
     sub.add_parser("doctor")
-    sub.add_parser("ensure", help="Start Lightpanda if present; never starts Chromium")
+    sub.add_parser("ensure", help="Start standalone Chromium if it is not already up")
 
     p = sub.add_parser("start")
     p.add_argument("--engine", choices=["auto", "lightpanda", "chromium", "both"])
-    p.add_argument("--xvfb", action="store_true")
+    p.add_argument("--xvfb", action="store_true", help="headed Chromium on a new Xvfb (CI)")
+    p.add_argument(
+        "--headed",
+        action="store_true",
+        help="headed Chromium on the current DISPLAY (desktop). Same as WICK_HEADED=1",
+    )
 
     p = sub.add_parser("stop")
     p.add_argument("--engine", choices=["lightpanda", "chromium", "all"], default="all")
@@ -2954,9 +3644,14 @@ def main() -> int:
             "status", "backends", "doctor", "init", "list", "get", "set", "rm", "match", "gen",
             "resolve", "suggest", "autofill", "lock", "unlock", "grant",
             "passkey-new", "passkey_new",
+            "audit", "backup", "restore", "harden",
         ],
     )
-    p.add_argument("name", nargs="?", help="entry name (set/get/rm) or ignored")
+    p.add_argument("name", nargs="?", help="entry name (set/get/rm) or backup/restore path")
+    p.add_argument("--dest", help="destination path for vault backup")
+    p.add_argument("--src", help="source path for vault restore")
+    p.add_argument("--limit", type=int, default=50, help="audit tail length (default 50)")
+    p.add_argument("--force", action="store_true", help="with restore: overwrite an existing store")
     p.add_argument("--password", help="password value for set (prefer env WICK_VAULT_SET_PASSWORD)")
     p.add_argument("--username")
     p.add_argument("--url", help="associated URL (set/match)")
@@ -2990,6 +3685,19 @@ def main() -> int:
     ])
     p.add_argument("rest", nargs="*",
         help="URL / selector / value / x y (click_xy) / n (click_n) / text (type)")
+    p.add_argument(
+        "--after-challenge",
+        nargs="?",
+        const=15000,
+        type=int,
+        metavar="MS",
+        help="with login: wait until a challenge widget is gone, then fill (does not solve)",
+    )
+    p.add_argument(
+        "--no-submit",
+        action="store_true",
+        help="with login: fill but do not click submit",
+    )
     p.add_argument("--expect-url-fragment", help="fail the act unless the page URL contains this fragment")
     p.add_argument("--expect-element", help="fail the act unless this selector is visible")
     _add_json_only(p)
@@ -3001,8 +3709,25 @@ def main() -> int:
     p = sub.add_parser("metrics", help="Lightpanda Prometheus metrics from serve CDP")
     _add_json_only(p)
 
+    p = sub.add_parser("read", help="Structured page read: kind, headings, paragraphs")
+    _add_observe_url(p)
+    p.add_argument("-q", "--q", dest="q", help="Keep paragraphs matching these words")
+    p.add_argument("--section", help="Keep one heading and its paragraphs")
+    p.add_argument("--max", type=int, default=12000)
+    p.add_argument("--excerpt", type=int, default=1200)
+    p.add_argument("--elements", type=int, default=20)
+    p.add_argument("--link-limit", type=int, default=15)
+    p.add_argument("--tree-max", type=int, default=60000)
+    p.add_argument("--wait-until", default="load")
+    p.add_argument("--wait-ms", type=int, default=2000)
+    p.add_argument("--fast", action="store_true")
+    p.add_argument("--no-strip", action="store_true")
+    p.add_argument("--fail-http", action="store_true")
+    _add_observe_profile(p)
+    _add_json_only(p)
+
     p = sub.add_parser("snap", help="Agent one-shot snapshot: title, excerpt, links, elements")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
     p.add_argument("--elements", type=int, default=40)
@@ -3018,7 +3743,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("observe", help="Alias for snap (agent observe snapshot)")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
     p.add_argument("--elements", type=int, default=40)
@@ -3049,7 +3774,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("plan", help="Goal-agnostic action suggestions from snap")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
     p.add_argument("--elements", type=int, default=40)
@@ -3065,7 +3790,7 @@ def main() -> int:
     _add_json_only(p)
 
     p = sub.add_parser("ask", help="Snap + fuzzy filter links/elements by query (no LLM)")
-    p.add_argument("url")
+    _add_observe_url(p)
     p.add_argument("--q", required=True, help="search terms (word substring match)")
     p.add_argument("--max", type=int, default=12000)
     p.add_argument("--excerpt", type=int, default=600)
@@ -3078,6 +3803,13 @@ def main() -> int:
     p.add_argument("--no-strip", action="store_true")
     p.add_argument("--fail-http", action="store_true")
     _add_observe_profile(p)
+    _add_json_only(p)
+
+    p = sub.add_parser(
+        "challenge",
+        help="Observe-only: detect a human challenge on a URL (never login, never solve)",
+    )
+    p.add_argument("url")
     _add_json_only(p)
 
     p = sub.add_parser("probe", help="Compact agent brief: status, title, links, excerpt")
@@ -3116,6 +3848,14 @@ def main() -> int:
     p.add_argument("expr")
 
     sub.add_parser("tools", help="Export OpenAI-style function tool schemas (snap/plan/ask/…)")
+    sub.add_parser("skill", help="Compact purpose, loop, and rules for agent harnesses")
+    sub.add_parser("commands", help="JSON catalog of CLI commands for shell-only agents")
+    sub.add_parser("help", help="Alias of commands (JSON, not argparse text)")
+
+    p = sub.add_parser("call", help="One-shot RPC via CLI: wick call snap '{json}'")
+    p.add_argument("name", nargs="?", default="", help="snap / read / act / vault / … (or wick_snap)")
+    p.add_argument("payload", nargs="?", default="", help="JSON object of the same args as RPC/tools")
+    _add_json_only(p)
 
     p = sub.add_parser("rpc", help="JSON-lines stdio RPC for agent harnesses")
     p.add_argument("mode", nargs="?", default="stdio", choices=["stdio"])
@@ -3127,9 +3867,11 @@ def main() -> int:
     _add_json_only(p)
 
     sub.add_parser("prune")
-    sub.add_parser("install-engine", help="Download free Lightpanda nightly (optional backend)")
+    sub.add_parser("install-engine", help="Install Playwright Chromium (standalone engine)")
 
     args = ap.parse_args()
+    if not getattr(args, "cmd", None):
+        return cmd_commands(args)
     if wick_capability is not None:
         session_action = getattr(args, "action", None) if args.cmd == "session" else None
         if session_action == "export" and getattr(args, "reveal", False):
@@ -3182,11 +3924,17 @@ def main() -> int:
         "act": cmd_act,
         "run": cmd_run,
         "probe": cmd_probe,
+        "challenge": cmd_challenge,
+        "read": cmd_read,
         "snap": cmd_snap,
         "observe": cmd_snap,
         "snap-many": cmd_snap_many,
         "elements": cmd_elements,
         "tools": cmd_tools,
+        "skill": cmd_skill,
+        "commands": cmd_commands,
+        "help": cmd_help,
+        "call": cmd_call,
         "rpc": cmd_rpc,
         "mcp": cmd_mcp,
         "plan": cmd_plan,

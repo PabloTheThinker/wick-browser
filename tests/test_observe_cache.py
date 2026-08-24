@@ -77,6 +77,27 @@ class TestObserveCache(unittest.TestCase):
         )
         self.assertNotEqual(a, b)
 
+    def test_clear_drops_entries(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["WICK_HOME"] = td
+            os.environ["WICK_OBSERVE_CACHE"] = "1"
+            os.environ["WICK_OBSERVE_CACHE_TTL"] = "30"
+            key = observe_cache.cache_key(
+                url="https://example.com/",
+                fast=True,
+                wait_ms=800,
+                session="default",
+                mode="snap",
+                profile="micro",
+            )
+            observe_cache.put(key, {"ok": True, "url": "https://example.com/"})
+            self.assertIsNotNone(observe_cache.get(key))
+            removed = observe_cache.clear()
+            self.assertGreaterEqual(removed, 1)
+            self.assertIsNone(observe_cache.get(key))
+
 
 if __name__ == "__main__":
     unittest.main()

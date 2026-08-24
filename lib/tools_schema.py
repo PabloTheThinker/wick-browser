@@ -1,16 +1,40 @@
 """OpenAI-style function tool schemas for Wick agent commands."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
+
+_LIB = Path(__file__).resolve().parent
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+
+try:
+    import agent_skill as wick_skill
+except Exception:
+    wick_skill = None  # type: ignore
+try:
+    import cli_catalog as wick_cli_catalog
+except Exception:
+    wick_cli_catalog = None  # type: ignore
 
 URL_PROP = {
     "type": "string",
-    "description": "Absolute URL to observe or act on (e.g. https://example.com/).",
+    "description": (
+        "Absolute URL to open. Omit, pass empty, or pass here to observe the current "
+        "Chromium page after act — do not re-goto a page you are already on."
+    ),
+}
+
+HERE_PROP = {
+    "type": "boolean",
+    "description": "Observe the current Chromium page (same as omitting url).",
+    "default": False,
 }
 
 FAST_PROP = {
     "type": "boolean",
-    "description": "Faster observe: domcontentloaded + ~1.2s wait.",
+    "description": "Faster observe: domcontentloaded + ~1.2s wait. Skipped when the tab is reused.",
     "default": False,
 }
 
@@ -40,12 +64,48 @@ def _fn(name: str, description: str, parameters: dict[str, Any]) -> dict[str, An
 
 WICK_TOOLS: list[dict[str, Any]] = [
     _fn(
-        "wick_snap",
-        "Compact page snapshot: title, excerpt, links, interactive elements (primary observe). Use profile=micro for the cheapest first look (Hermes/Claude).",
+        "wick_skill",
+        "Load Wick's compact agent skill: purpose, snap→plan→act loop, and hard rules. Call once at harness start.",
+        {"type": "object", "properties": {}},
+    ),
+    _fn(
+        "wick_read",
+        (
+            "Structured page read: kind, headings, sections, and paragraphs. "
+            "Use after snap when you need the prose — not a full markdown dump. "
+            "Pass q or section to keep only matching body. Omit url after act."
+        ),
         {
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "here": HERE_PROP,
+                "q": {
+                    "type": "string",
+                    "description": "Keep paragraphs matching these words (no LLM).",
+                },
+                "section": {
+                    "type": "string",
+                    "description": "Keep one heading and its paragraphs.",
+                },
+                "profile": PROFILE_PROP,
+                "fast": FAST_PROP,
+                "fail_http": FAIL_HTTP_PROP,
+            },
+        },
+    ),
+    _fn(
+        "wick_snap",
+        (
+            "Primary observe: kind, title, excerpt, headings, links, interactive elements with role= hints. "
+            "Omit url (or pass here) after act to reuse the current tab — do not re-goto. "
+            "Need the body? wick_read. Use THIS snap's hints only. Prefer profile=micro first."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "url": URL_PROP,
+                "here": HERE_PROP,
                 "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "full": {
@@ -55,45 +115,45 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 },
                 "fail_http": FAIL_HTTP_PROP,
             },
-            "required": ["url"],
         },
     ),
     _fn(
         "wick_observe",
-        "Alias of wick_snap — compact observe snapshot for agents.",
+        "Alias of wick_snap — compact observe snapshot for agents. Omit url to snap here.",
         {
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "here": HERE_PROP,
                 "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "full": {"type": "boolean", "default": False},
                 "fail_http": FAIL_HTTP_PROP,
             },
-            "required": ["url"],
         },
     ),
     _fn(
         "wick_plan",
-        "Goal-agnostic next-step suggestions from a snap (open, click hints, screenshot, pdf, ask).",
+        "Goal-agnostic next-step suggestions from a snap (open, click hints, screenshot, pdf, ask). Omit url after act.",
         {
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "here": HERE_PROP,
                 "profile": PROFILE_PROP,
                 "fast": FAST_PROP,
                 "fail_http": FAIL_HTTP_PROP,
             },
-            "required": ["url"],
         },
     ),
     _fn(
         "wick_ask",
-        "Snap + deterministic filter of links/elements/excerpt by query words (no LLM).",
+        "Snap + deterministic filter of links/elements/excerpt/headings/paragraphs by query words (no LLM). Omit url after act.",
         {
             "type": "object",
             "properties": {
                 "url": URL_PROP,
+                "here": HERE_PROP,
                 "q": {
                     "type": "string",
                     "description": "Search terms (case-insensitive substring match).",
@@ -102,12 +162,12 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 "fast": FAST_PROP,
                 "fail_http": FAIL_HTTP_PROP,
             },
-            "required": ["url", "q"],
+            "required": ["q"],
         },
     ),
     _fn(
         "wick_snap_many",
-        "Parallel observe of many URLs (bounded concurrency). Prefer profile=micro.",
+        "Observe many URLs (serialized on standalone Chromium). Prefer profile=micro.",
         {
             "type": "object",
             "properties": {
@@ -119,7 +179,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
                 "profile": {**PROFILE_PROP, "default": "micro"},
                 "concurrency": {
                     "type": "integer",
-                    "description": "Max parallel fetches (1–8).",
+                    "description": "Max parallel fetches (1–8). Chromium forces 1.",
                     "default": 4,
                 },
             },
@@ -146,7 +206,7 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_elements",
-        "Interactive element list from semantic tree (click targets).",
+        "Interactive element list from semantic tree (click targets). Prefer snap unless you only need hints.",
         {
             "type": "object",
             "properties": {
@@ -162,19 +222,33 @@ WICK_TOOLS: list[dict[str, Any]] = [
     ),
     _fn(
         "wick_act",
-        "Chromium interactive action. Computer-use: cu (screenshot + numbered boxes), click_xy / click_n, type / type_n, key. For passwords pass secret refs (vault://…, pass://…, env://…). Prefer action=login or action=passkey (vault-backed WebAuthn via Chromium virtual authenticator — not Touch ID).",
+        (
+            "Chromium interactive action. After a click that navigates: wait_url, then snap with no url. "
+            "Search: fill the searchbox hint, then press Enter — do not click a generic Go. "
+            "Computer-use (last resort): cu, then click_n / click_xy / type. "
+            "Passwords: vault:// / pass:// / env:// refs; prefer action=login or passkey. Secrets never in JSON."
+        ),
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "goto, cu, click, click_xy, click_n, type, type_n, key, fill, login, passkey, passkey_register, wait_url, scroll, pdf, …",
+                    "description": "goto, cu, click, click_xy, click_n, type, type_n, key, press, fill, login, passkey, passkey_register, wait_url, scroll, pdf, …",
                 },
                 "rest": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Action arguments. cu: [optional screenshot path]. click_xy: [x, y]. click_n: [n]. type: [text]. fill: [selector, text_or_secret_ref]. Optional --expect-url-fragment FRAG and --expect-element SEL.",
+                    "description": "Action arguments. Use THIS snap's elements[].hint. fill: [selector, text_or_secret_ref]. login: [url, optional --after-challenge MS, --no-submit]. Search: fill then press Enter.",
                     "default": [],
+                },
+                "after_challenge": {
+                    "type": "integer",
+                    "description": "With login: wait this many ms for a challenge widget to clear, then fill (does not solve).",
+                },
+                "no_submit": {
+                    "type": "boolean",
+                    "description": "With login: fill but do not click submit.",
+                    "default": False,
                 },
             },
             "required": ["action"],
@@ -242,12 +316,28 @@ WICK_TOOLS: list[dict[str, Any]] = [
                         "lock",
                         "grant",
                         "passkey-new",
+                        "audit",
+                        "backup",
+                        "restore",
+                        "harden",
                     ],
-                    "description": "Metadata actions only; never request reveal. unlock/lock/grant need WICK_PROFILE=full-act. passkey-new stores an origin-bound WebAuthn credential (no key in JSON).",
+                    "description": "Metadata actions only; never request reveal. unlock/lock/grant/backup/restore/harden need WICK_PROFILE=full-act. audit is observe-safe (no secrets). backup/restore are file copies, not live sync. harden converts filekey→passphrase and deletes master.key.",
                 },
                 "name": {
                     "type": "string",
-                    "description": "Entry name for passkey-new.",
+                    "description": "Entry name for passkey-new, or backup/restore path.",
+                },
+                "dest": {
+                    "type": "string",
+                    "description": "Destination path for backup (encrypted snapshot; passphrase from WICK_VAULT_BACKUP_PASSPHRASE).",
+                },
+                "src": {
+                    "type": "string",
+                    "description": "Source path for restore.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Audit tail length (default 50). Never includes secrets.",
                 },
                 "url": {
                     "type": "string",
@@ -261,15 +351,37 @@ WICK_TOOLS: list[dict[str, Any]] = [
             "required": ["action"],
         },
     ),
+    _fn(
+        "wick_challenge",
+        "Observe-only CAPTCHA/bot-wall detect. GET public HTML. Never logs in. Never solves.",
+        {
+            "type": "object",
+            "properties": {
+                "url": URL_PROP,
+            },
+            "required": ["url"],
+        },
+    ),
 ]
 
 
 def tools_export(version: str) -> dict[str, Any]:
+    purpose = wick_skill.PURPOSE if wick_skill is not None else "Wick is a standalone Chromium browser for agents."
+    loop = list(wick_skill.LOOP) if wick_skill is not None else []
+    rules = list(wick_skill.RULES) if wick_skill is not None else []
     return {
         "ok": True,
         "product": "wick",
         "version": version,
         "schema": "openai_tools_v1",
+        "purpose": purpose,
+        "loop": loop,
+        "rules": rules,
         "tools": WICK_TOOLS,
-        "hint": "ChatGPT/Grok: load tools[] then call wick rpc stdio. Claude/Hermes/Cursor: wick mcp (JSON-RPC 2.0).",
+        "cli": wick_cli_catalog.cli_map() if wick_cli_catalog is not None else {},
+        "hint": (
+            "Shell-only: wick commands, then run the cli strings (one JSON object each). "
+            "wick call CMD '{json}' uses these same args. "
+            "Optional sockets: ChatGPT/Grok wick rpc stdio; Claude/Hermes/Cursor wick mcp."
+        ),
     }

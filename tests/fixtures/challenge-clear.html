@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sign in</title>
+</head>
+<body>
+  <h1>Sign in</h1>
+  <div id="wall" class="cf-turnstile" data-sitekey="example">Checking…</div>
+  <form id="f" hidden>
+    <label>Email <input type="email" id="user" autocomplete="username"></label>
+    <label>Password <input type="password" id="pass"></label>
+    <button type="submit">Log in</button>
+  </form>
+  <script>
+    document.querySelector("form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      location.hash = "ok";
+    });
+    setTimeout(function () {
+      var wall = document.getElementById("wall");
+      if (wall) wall.remove();
+      document.getElementById("f").hidden = false;
+    }, 400);
+  </script>
+</body>
+</html>

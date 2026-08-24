@@ -47,12 +47,21 @@ class TestProfiles(EnvCase):
         self.assertEqual(blocked["error"], "capability_denied")
         self.assertEqual(blocked["profile"], "observe-only")
         self.assertIsNotNone(capability.deny("act", action="login"))
+        self.assertIsNone(capability.deny("challenge"))
         self.assertIsNone(capability.deny("vault", vault_action="suggest"))
+        self.assertIsNone(capability.deny("vault", vault_action="audit"))
         self.assertIsNotNone(capability.deny("vault", vault_action="set"))
+        self.assertIsNotNone(capability.deny("vault", vault_action="backup"))
+        self.assertIsNotNone(capability.deny("vault", vault_action="restore"))
         self.assertIsNone(capability.deny("mcp"))
         self.assertIsNone(capability.deny("snap-many"))
         self.assertIsNone(capability.deny("snap_many"))
         self.assertIsNone(capability.deny("approve"))
+        self.assertIsNone(capability.deny("skill"))
+        self.assertIsNone(capability.deny("read"))
+        self.assertIsNone(capability.deny("commands"))
+        self.assertIsNone(capability.deny("call"))
+        self.assertIsNone(capability.deny("help"))
 
     def test_safe_act_allows_click_blocks_fill(self):
         os.environ["WICK_PROFILE"] = "safe-act"

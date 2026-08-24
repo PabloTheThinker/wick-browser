@@ -56,6 +56,163 @@ try:
     import challenge as wick_challenge
 except Exception:
     wick_challenge = None  # type: ignore
+try:
+    import elements as wick_elements
+except Exception:
+    wick_elements = None  # type: ignore
+try:
+    import page_read as wick_page_read
+except Exception:
+    wick_page_read = None  # type: ignore
+
+_OBSERVE_JS = """() => {
+  const skipName = (s) => {
+    const t = (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    return !t || /^(skip\\b|main content|keyboard shortcuts)$/.test(t);
+  };
+  const isVisible = (el) => {
+    if (!el) return false;
+    if (el.closest('[aria-hidden="true"]')) return false;
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 1 && r.height > 1;
+  };
+  const inChrome = (el) => !!(el && el.closest('nav, header, footer, [role=navigation], [role=banner], [role=contentinfo]'));
+  const pickMain = () => {
+    const scored = [];
+    const add = (el, bonus) => {
+      if (!el) return;
+      const t = ((el.innerText || '') + '').trim();
+      if (t.length < 20) return;
+      scored.push({el, score: t.length + bonus});
+    };
+    add(document.querySelector('#dp'), 8000);
+    const article = document.querySelector('article');
+    if (article && ((article.innerText || '').trim().length >= 400)) add(article, 6000);
+    add(document.querySelector('[itemprop="articleBody"]'), 6000);
+    add(document.querySelector('#mw-content-text'), 5000);
+    add(document.querySelector('[role="main"]'), 4000);
+    add(document.querySelector('main'), 4000);
+    const search = document.querySelector('#search');
+    if (search && search.querySelectorAll('a[href]').length >= 3) add(search, 7000);
+    add(document.querySelector('#content, #main-content'), 2000);
+    scored.sort((a, b) => b.score - a.score);
+    return (scored[0] && scored[0].el) || document.body;
+  };
+  const main = pickMain();
+  const text = ((main && main.innerText) || (document.body && document.body.innerText) || '').slice(0, 20000);
+  const headings = [];
+  const paragraphs = [];
+  const sections = [];
+  const paraRoot = main || document.body;
+  let current = null;
+  const startSection = (level, heading) => {
+    current = {heading, level, paragraphs: []};
+    sections.push(current);
+    headings.push({level, text: heading.slice(0, 160)});
+  };
+  const addPara = (t) => {
+    const slice = t.slice(0, 500);
+    if (current && current.paragraphs.length < 8) current.paragraphs.push(slice);
+    if (paragraphs.length < 24) paragraphs.push(slice);
+  };
+  for (const el of paraRoot.querySelectorAll('h1, h2, h3, p, li')) {
+    if (!isVisible(el) || inChrome(el)) continue;
+    const t = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (!t) continue;
+    if (/^H[123]$/.test(el.tagName)) {
+      if (skipName(t) || headings.length >= 24) continue;
+      startSection(parseInt(el.tagName[1], 10), t);
+      continue;
+    }
+    if (t.length < 40) continue;
+    addPara(t);
+  }
+  if (paragraphs.length < 3) {
+    for (const card of paraRoot.querySelectorAll('article, [data-asin], .s-result-item')) {
+      if (!isVisible(card) || inChrome(card)) continue;
+      const t = (card.innerText || '').replace(/\\s+/g, ' ').trim();
+      if (t.length < 16) continue;
+      addPara(t.slice(0, 500));
+      if (paragraphs.length >= 12) break;
+    }
+  }
+  const title = document.title || '';
+  const links = [];
+  const seenHref = new Set();
+  const addLink = (a) => {
+    const href = a.href || '';
+    if (!href || seenHref.has(href)) return;
+    if (href.indexOf('javascript:') === 0) return;
+    const t = (a.innerText || a.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    if (skipName(t)) return;
+    try {
+      const u = new URL(href, location.href);
+      if (u.pathname === location.pathname && u.search === location.search && u.hash) return;
+    } catch (e) {}
+    seenHref.add(href);
+    links.push({ text: t, href });
+  };
+  const collectLinks = (root) => {
+    if (!root) return;
+    for (const a of root.querySelectorAll('a[href]')) {
+      if (links.length >= 40) break;
+      if (!isVisible(a)) continue;
+      addLink(a);
+    }
+  };
+  collectLinks(main);
+  if (links.length < 12) collectLinks(document);
+  const roleOf = (el) => {
+    const r = (el.getAttribute('role') || '').toLowerCase();
+    if (r) return r;
+    const t = el.tagName.toLowerCase();
+    if (t === 'a') return 'link';
+    if (t === 'button') return 'button';
+    if (t === 'textarea') return 'textbox';
+    if (t === 'select') return 'combobox';
+    if (t === 'input') {
+      const ty = (el.getAttribute('type') || 'text').toLowerCase();
+      if (ty === 'submit' || ty === 'button' || ty === 'reset') return 'button';
+      if (ty === 'checkbox') return 'checkbox';
+      if (ty === 'radio') return 'radio';
+      if (ty === 'search') return 'searchbox';
+      return 'textbox';
+    }
+    return t;
+  };
+  const nameOf = (el) => {
+    const al = el.getAttribute('aria-label');
+    if (al) return al.trim();
+    if (el.labels && el.labels[0]) return (el.labels[0].innerText || '').trim();
+    const ph = el.getAttribute('placeholder');
+    if (ph) return ph.trim();
+    return (el.innerText || el.value || el.getAttribute('name') || '').replace(/\\s+/g, ' ').trim();
+  };
+  const elements = [];
+  const seenEl = new Set();
+  const pushEl = (el) => {
+    if (!el || seenEl.has(el) || elements.length >= 40) return;
+    const role = roleOf(el);
+    const name = nameOf(el).slice(0, 80);
+    const keepHiddenSearch = role === 'searchbox' || (el.getAttribute && el.getAttribute('type') === 'search');
+    if (!keepHiddenSearch && !isVisible(el)) return;
+    if (role === 'link' && skipName(name)) return;
+    seenEl.add(el);
+    let hint = null;
+    if (name) hint = 'role=' + role + '[name="' + name.replace(/"/g, '') + '"]';
+    else if (el.id) hint = 'css=#' + el.id;
+    elements.push({role, name, interactive: true, hint});
+  };
+  document.querySelectorAll(
+    'input[type=search], [role=searchbox], input[name=field-keywords], #twotabsearchtextbox'
+  ).forEach(pushEl);
+  const sel = 'a[href], button, input, textarea, select, [role=button], [role=link], [role=textbox], [role=searchbox]';
+  if (main) main.querySelectorAll(sel).forEach(pushEl);
+  document.querySelectorAll(sel).forEach(pushEl);
+  return {title, text, links, elements, headings, paragraphs, sections};
+}"""
 
 
 def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
@@ -75,6 +232,33 @@ def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
         if herr:
             return None, herr
     return normalized, None
+
+
+def parse_login_args(args: list[str]) -> dict:
+    """Split login flags. `--after-challenge [ms]` waits for a widget to clear."""
+    submit = True
+    after = False
+    timeout_ms = 15000
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--no-submit":
+            submit = False
+        elif tok == "--after-challenge":
+            after = True
+            if i + 1 < len(args) and str(args[i + 1]).isdigit():
+                timeout_ms = max(1, int(args[i + 1]))
+                i += 1
+        else:
+            rest.append(tok)
+        i += 1
+    return {
+        "rest": rest,
+        "submit": submit,
+        "after_challenge": after,
+        "timeout_ms": timeout_ms,
+    }
 
 
 def _wait_login_surface(page, timeout: int = 10000) -> None:
@@ -316,14 +500,24 @@ def pages_info(ctx):
 
 def resolve_locator(page, sel: str):
     """Translate role=link[name=\"...\"] hints to Playwright get_by_role."""
-    m = ROLE_SEL_RE.match((sel or "").strip())
+    raw = (sel or "").strip()
+    m = ROLE_SEL_RE.match(raw)
     if m:
         role, name1, name2 = m.groups()
         name = name1 if name1 is not None else name2
-        if name:
-            return page.get_by_role(role, name=name)
-        return page.get_by_role(role)
-    return page.locator(sel)
+        kwargs = {"name": name} if name else {}
+        loc = page.get_by_role(role, **kwargs)
+        # HTML type=search is ARIA searchbox. Older snaps emitted textbox.
+        if role == "textbox":
+            loc = loc.or_(page.get_by_role("searchbox", **kwargs))
+        elif role == "searchbox":
+            loc = loc.or_(page.get_by_role("textbox", **kwargs))
+        return loc
+    if raw.startswith("css="):
+        return page.locator(raw[4:])
+    if raw.startswith("text="):
+        return page.get_by_text(raw[5:])
+    return page.locator(raw)
 
 
 # Secret injection always halts on a challenge. Click/type may proceed when
@@ -641,8 +835,9 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
         return 0, out
 
     elif action == "login":
-        rest = [a for a in args if a != "--no-submit"]
-        submit = "--no-submit" not in args
+        flags = parse_login_args(args)
+        rest = flags["rest"]
+        submit = flags["submit"]
         start_url = rest[0] if rest else None
         if start_url:
             start_url, err = _guard_nav_url(start_url)
@@ -654,6 +849,15 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             except Exception:
                 pass
         _wait_login_surface(page)
+        if flags["after_challenge"] and wick_challenge is not None:
+            still = wick_challenge.wait_cleared(page, timeout_ms=flags["timeout_ms"])
+            if still and still.get("found"):
+                blocked = wick_challenge.deny_if_halted(still, action="login", secret=True)
+                if blocked:
+                    blocked = dict(blocked)
+                    blocked["after_challenge"] = True
+                    blocked["waited_ms"] = flags["timeout_ms"]
+                    return 1, blocked
         blocked = _challenge_halt(page, "login", secret=True)
         if blocked:
             return 1, blocked
@@ -686,6 +890,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
                             "filled": [],
                             "refs": [m.get("passkey_ref") or f"vault://{m.get('name')}/passkey"],
                             "submitted": True,
+                            "after_challenge": bool(flags["after_challenge"]),
                             "vault": {"revealed": False, "chars": None},
                         }
                 except Exception:
@@ -755,6 +960,7 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             "entry": m.get("name"),
             "origin_reason": m.get("reason"),
             "submitted": submitted,
+            "after_challenge": bool(flags["after_challenge"]),
             "vault": {"revealed": False, "chars": None},
         }
 
@@ -794,6 +1000,120 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
     elif action == "eval":
         val = page.evaluate(args[0])
         return 0, {"ok": True, "result": val}
+
+    elif action == "observe":
+        start_url = args[0] if args else None
+        dump = (args[1] if len(args) > 1 else "markdown") or "markdown"
+        max_chars = int(args[2]) if len(args) > 2 else 12000
+        wait_ms = int(args[3]) if len(args) > 3 else 1200
+        if wick_origins is not None:
+            here = wick_origins.is_here_url(start_url)
+        else:
+            here = (not start_url) or str(start_url).strip() in {".", "here", "--here"}
+        reused = False
+        if here:
+            live = page.url or ""
+            blank = (not live) or live.startswith("about:") or "chrome://new" in live.lower()
+            if blank:
+                return 1, {
+                    "ok": False,
+                    "error": "no_current_page",
+                    "url": live,
+                    "hint": "wick act goto URL first, then wick snap",
+                }
+            reused = True
+        elif start_url:
+            start_url, err = _guard_nav_url(start_url)
+            if err:
+                return 1, err
+            live = page.url or ""
+            if wick_origins is not None and wick_origins.same_observe_target(live, start_url):
+                reused = True
+            else:
+                page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.wait_for_timeout(max(0, min(wait_ms, 4000)))
+                except Exception:
+                    pass
+        data: dict = {}
+        try:
+            data = page.evaluate(_OBSERVE_JS) or {}
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        title = str(data.get("title") or page.title() or "")
+        text = str(data.get("text") or "")
+        links = data.get("links") if isinstance(data.get("links"), list) else []
+        raw_els = data.get("elements") if isinstance(data.get("elements"), list) else []
+        elements: list[dict] = []
+        for i, el in enumerate(raw_els[:40], start=1):
+            if not isinstance(el, dict):
+                continue
+            role = str(el.get("role") or "generic")
+            name = str(el.get("name") or "")
+            hint = el.get("hint")
+            if not hint and wick_elements is not None:
+                hint = wick_elements._hint(role, name)
+            elif not hint and name:
+                hint = f'role={role}[name="{name}"]'
+            item = {
+                "id": i,
+                "role": role,
+                "name": name,
+                "interactive": True,
+                "hint": hint,
+            }
+            elements.append(item)
+        if wick_elements is not None:
+            tree = wick_elements.tree_from_elements(title, elements)
+            md = wick_elements.markdown_from_observe(title, text, links)
+        else:
+            tree = f"1 document '{title.replace(chr(39), '')}'"
+            md = (f"# {title}\n\n" if title else "") + text
+        html = ""
+        if dump == "html":
+            try:
+                html = page.content()
+            except Exception:
+                html = ""
+        if dump == "semantic_tree_text":
+            content = tree[:max_chars]
+        elif dump == "html":
+            content = html[:max_chars]
+        else:
+            content = md[:max_chars]
+        raw_headings = data.get("headings") if isinstance(data.get("headings"), list) else []
+        raw_paras = data.get("paragraphs") if isinstance(data.get("paragraphs"), list) else []
+        raw_sections = data.get("sections") if isinstance(data.get("sections"), list) else []
+        payload = {
+            "ok": True,
+            "url": page.url,
+            "title": title,
+            "http_ok": True,
+            "http_status": 200,
+            "dump": dump,
+            "chars": len(content),
+            "content": content,
+            "text": text,
+            "excerpt": re.sub(r"\s+", " ", text).strip()[:600],
+            "links": links[:25],
+            "elements": elements,
+            "headings": raw_headings[:24],
+            "paragraphs": raw_paras[:24],
+            "sections": raw_sections[:16],
+            "engine": "chromium",
+            "reused": reused,
+        }
+        if wick_page_read is not None:
+            shaped = wick_page_read.shape_observe(payload, excerpt_len=600)
+            if shaped.get("excerpt"):
+                payload["excerpt"] = shaped["excerpt"]
+            payload["kind"] = shaped.get("kind")
+            payload["headings"] = shaped.get("headings") or payload["headings"]
+            payload["paragraphs"] = shaped.get("paragraphs") or payload["paragraphs"]
+            payload["sections"] = shaped.get("sections") or payload["sections"]
+        return 0, payload
 
     elif action == "content":
         text = page.inner_text("body")

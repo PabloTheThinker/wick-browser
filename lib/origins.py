@@ -13,7 +13,7 @@ import ipaddress
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 
 def _sibling_module(name: str) -> Any:
@@ -217,6 +217,42 @@ def origins_compatible(
     if saved["scheme"] != page["scheme"]:
         return False, "scheme_mismatch", 0
     return True, reason, score
+
+
+def same_observe_target(current: str | None, target: str | None) -> bool:
+    """True when Chromium is already on the page an agent wants to snap.
+
+    Extra tracking query on the live URL is OK. Every key in the target query
+    must match. Fragments are ignored.
+    """
+    cur = (current or "").strip()
+    tgt = (target or "").strip()
+    if not cur or not tgt:
+        return False
+    if tgt in {".", "here", "--here"}:
+        return True
+    try:
+        c, t = urlsplit(cur), urlsplit(tgt)
+    except Exception:
+        return False
+    if (c.scheme or "https").lower() != (t.scheme or "https").lower():
+        return False
+    if (c.hostname or "").lower() != (t.hostname or "").lower():
+        return False
+    c_path = c.path.rstrip("/") or "/"
+    t_path = t.path.rstrip("/") or "/"
+    if c_path != t_path:
+        return False
+    if not t.query:
+        return True
+    have = dict(parse_qsl(c.query, keep_blank_values=True))
+    want = dict(parse_qsl(t.query, keep_blank_values=True))
+    return all(have.get(k) == v for k, v in want.items())
+
+
+def is_here_url(url: str | None) -> bool:
+    s = (url or "").strip()
+    return s == "" or s in {".", "here", "--here"}
 
 
 def allow_private_override() -> bool:

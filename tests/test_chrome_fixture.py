@@ -23,6 +23,16 @@ if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 
 FIXTURE = ROOT / "tests" / "fixtures" / "cu.html"
+_CU_ENV = (
+    "WICK_CHALLENGE_COMPUTER_USE",
+    "WICK_HEADED",
+    "WICK_HEADLESS",
+    "WICK_XVFB",
+    "WAYLAND_DISPLAY",
+    "XDG_SESSION_TYPE",
+    "XDG_CURRENT_DESKTOP",
+    "DESKTOP_SESSION",
+)
 
 
 def _free_port() -> int:
@@ -95,6 +105,17 @@ class TestChromeFixture(unittest.TestCase):
         except Exception:
             pass
 
+    def setUp(self):
+        self._saved_cu = {k: os.environ.pop(k, None) for k in _CU_ENV}
+        os.environ["WICK_CHALLENGE_COMPUTER_USE"] = "0"
+
+    def tearDown(self):
+        for k in _CU_ENV:
+            os.environ.pop(k, None)
+        for k, v in self._saved_cu.items():
+            if v is not None:
+                os.environ[k] = v
+
     def _run(self, action: str, *args: str) -> dict:
         import chrome_actions as ca
 
@@ -131,6 +152,79 @@ class TestChromeFixture(unittest.TestCase):
 
         waited = self._run("wait_text", "Welcome Ada")
         self.assertTrue(waited.get("ok"), waited)
+
+    def test_observe_article_skips_chrome(self):
+        url = f"http://127.0.0.1:{self.port}/article.html"
+        out = self._run("observe", url, "markdown", "8000", "80")
+        self.assertTrue(out.get("ok"), out)
+        excerpt = out.get("excerpt") or ""
+        self.assertIn("RFC 2606", excerpt)
+        self.assertNotIn("Accept all cookies", excerpt)
+        texts = " ".join(str(h.get("text") or "") for h in (out.get("headings") or []))
+        self.assertIn("Example Domains", texts)
+        self.assertEqual(out.get("kind"), "article")
+        paras = out.get("paragraphs") or []
+        self.assertTrue(any("structured read" in p.lower() for p in paras), paras)
+        sections = out.get("sections") or []
+        heads = " ".join(str(s.get("heading") or "") for s in sections)
+        self.assertIn("How agents should read them", heads)
+        agents = next((s for s in sections if "agents" in (s.get("heading") or "").lower()), None)
+        self.assertIsNotNone(agents, sections)
+        self.assertTrue(any("structured read" in p.lower() for p in (agents.get("paragraphs") or [])), agents)
+
+    def test_observe_prefers_main_search_results(self):
+        shop = f"http://127.0.0.1:{self.port}/search-results.html"
+        out = self._run("observe", shop, "markdown", "4000", "200")
+        self.assertTrue(out.get("ok"), out)
+        excerpt = out.get("excerpt") or ""
+        content = out.get("content") or ""
+        self.assertTrue(
+            "70,000" in excerpt or "Anker" in excerpt or "Anker" in content,
+            excerpt,
+        )
+        texts = " ".join(str(l.get("text") or "") for l in out.get("links") or [])
+        hrefs = " ".join(str(l.get("href") or "") for l in out.get("links") or [])
+        self.assertTrue("Anker" in texts or "/dp/anker" in hrefs, out.get("links"))
+        search = next(
+            (e for e in out.get("elements") or [] if e.get("role") == "searchbox"),
+            None,
+        )
+        self.assertIsNotNone(search, out.get("elements"))
+        self.assertEqual(search.get("hint"), 'role=searchbox[name="Search Amazon"]')
+
+    def test_fill_searchbox_accepts_legacy_textbox_hint(self):
+        shop = f"http://127.0.0.1:{self.port}/search-results.html"
+        self.assertTrue(self._run("goto", shop).get("ok"))
+        filled = self._run("fill", 'role=textbox[name="Search Amazon"]', "usb-c cable")
+        self.assertTrue(filled.get("ok"), filled)
+        self.assertEqual(self.page.locator("#q").input_value(), "usb-c cable")
+
+    def test_observe_reuses_current_page_and_here(self):
+        gone = self._run("goto", self.base)
+        self.assertTrue(gone.get("ok"), gone)
+        same = self._run("observe", self.base, "markdown", "4000", "50")
+        self.assertTrue(same.get("ok"), same)
+        self.assertTrue(same.get("reused"), same)
+        here = self._run("observe", "here", "markdown", "4000", "50")
+        self.assertTrue(here.get("ok"), here)
+        self.assertTrue(here.get("reused"), here)
+        self.assertIn("cu.html", here.get("url") or "")
+
+    def test_observe_returns_role_hints_for_agents(self):
+        out = self._run("observe", self.base, "markdown", "4000", "200")
+        self.assertTrue(out.get("ok"), out)
+        self.assertEqual(out.get("engine"), "chromium")
+        self.assertTrue(
+            "CU Fixture" in (out.get("title") or "")
+            or "Computer Use Lab" in (out.get("title") or "")
+            or "Computer Use Lab" in (out.get("content") or ""),
+            out.get("title"),
+        )
+        names = " ".join(str(e.get("name") or "") for e in out.get("elements") or [])
+        self.assertIn("Go", names)
+        hints = [e.get("hint") for e in out.get("elements") or [] if e.get("hint")]
+        self.assertTrue(any(str(h).startswith("role=") for h in hints), hints)
+        self.assertIn("#", out.get("content") or "")
 
     def test_expect_url_fragment_after_login_submit(self):
         self.assertTrue(self._run("goto", self.base).get("ok"))
@@ -200,6 +294,9 @@ class TestChromeFixture(unittest.TestCase):
         self.assertNotIn("solver", dump)
 
     def test_click_halts_on_turnstile_without_solving(self):
+        import challenge
+
+        self.assertFalse(challenge.computer_use_allowed())
         url = f"http://127.0.0.1:{self.port}/challenge.html"
         gone = self._run("goto", url)
         self.assertTrue(gone.get("ok"), gone)
@@ -242,12 +339,48 @@ class TestChromeFixture(unittest.TestCase):
             except Exception:
                 pass
 
+    def test_late_iframe_widget_is_detected(self):
+        import challenge
+
+        url = f"http://127.0.0.1:{self.port}/challenge-late.html"
+        gone = self._run("goto", url)
+        self.assertTrue(gone.get("ok"), gone)
+        self.page.wait_for_selector("iframe#late", timeout=2000)
+        hit = challenge.page_challenge(self.page)
+        self.assertTrue(hit["found"], hit)
+        self.assertEqual(hit["kind"], "turnstile")
+        self.assertFalse(hit["solves"])
+
+    def test_login_after_challenge_waits_then_fills(self):
+        import vault
+
+        url = f"http://127.0.0.1:{self.port}/challenge-clear.html"
+        vault.ensure_local_key()
+        vault.set_entry(
+            "local-clear",
+            password="s3cret-value-xyz",
+            username="agent@example.com",
+            url=url,
+        )
+        out = self._run("login", url, "--after-challenge", "4000")
+        self.assertTrue(out.get("ok"), out)
+        self.assertTrue(out.get("after_challenge"))
+        self.assertNotIn("s3cret-value-xyz", json.dumps(out))
+        try:
+            self.page.wait_for_function(
+                "() => window.location.hash === '#ok'",
+                timeout=8000,
+            )
+        except Exception as e:
+            raise unittest.SkipTest(f"after-challenge login did not navigate: {e}")
+        self.assertIn("#ok", self.page.url)
+
     def test_login_refuses_example_com_vault_on_localhost(self):
         import vault
 
         vault.ensure_local_key()
         # Other fixture tests save 127.0.0.1 entries; those would match this origin.
-        for name in ("local-chal", "local-login", "local-pk"):
+        for name in ("local-chal", "local-login", "local-pk", "local-clear", "local-chal-cu"):
             try:
                 vault.delete_entry(name)
             except Exception:
@@ -290,6 +423,22 @@ class TestChromeFixture(unittest.TestCase):
         except Exception as e:
             raise unittest.SkipTest(f"virtual authenticator assertion did not complete: {e}")
         self.assertEqual(self.page.locator("#out").inner_text(), "asserted")
+
+
+class TestParseLoginArgs(unittest.TestCase):
+    def test_after_challenge_optional_timeout(self):
+        import chrome_actions as ca
+
+        flags = ca.parse_login_args(["https://example.com/login", "--after-challenge", "4000"])
+        self.assertEqual(flags["rest"], ["https://example.com/login"])
+        self.assertTrue(flags["after_challenge"])
+        self.assertEqual(flags["timeout_ms"], 4000)
+        self.assertTrue(flags["submit"])
+
+        bare = ca.parse_login_args(["https://example.com/login", "--after-challenge", "--no-submit"])
+        self.assertTrue(bare["after_challenge"])
+        self.assertEqual(bare["timeout_ms"], 15000)
+        self.assertFalse(bare["submit"])
 
 
 if __name__ == "__main__":

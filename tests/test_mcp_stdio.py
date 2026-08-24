@@ -50,11 +50,12 @@ class TestMcpProtocol(unittest.TestCase):
             version="0.9.0",
         )
         names = {t["name"] for t in resp["result"]["tools"]}
-        for n in ("snap", "plan", "ask", "act", "session", "vault", "snap_many"):
+        for n in ("snap", "plan", "ask", "act", "session", "vault", "snap_many", "challenge", "skill", "read", "commands"):
             self.assertIn(n, names)
         snap = next(t for t in resp["result"]["tools"] if t["name"] == "snap")
         self.assertIn("url", snap["inputSchema"]["properties"])
         self.assertIn("profile", snap["inputSchema"]["properties"])
+        self.assertNotIn("url", snap["inputSchema"].get("required") or [])
 
     def test_tools_call_snap(self):
         resp = mcp_stdio.handle_rpc(

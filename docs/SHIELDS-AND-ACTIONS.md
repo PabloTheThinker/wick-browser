@@ -9,7 +9,7 @@
 | Private / internal net block | **Yes** — SSRF default |
 | Fingerprint farbling (canvas/WebGL/audio) | **No** — needs engine-level patches (Brave/Camoufox). Wick states this in `wick shields` |
 | HTTPS / first-party isolation | Session cookie jars (`wick session`) — not full site-isolation browser |
-| Stealth anti-bot | Chromium path: automation flags only. **Not** Camoufox/nodriver-class. Prefer Lightpanda for read paths (different fingerprint surface) |
+| Stealth anti-bot | Chromium: automation flags only. **Not** Camoufox/nodriver-class |
 
 Wick optimizes for **agent safety + utility on a local machine**, not “undetectable scraper.”
 
@@ -46,7 +46,7 @@ Wick optimizes for **agent safety + utility on a local machine**, not “undetec
 
 - Shields **on**
 - Session **default** (override `WICK_SESSION`)
-- Lightpanda for read; Chromium on demand for act/shot
+- Standalone Chromium for observe and act
 
 
 ## 0.4.1 additions

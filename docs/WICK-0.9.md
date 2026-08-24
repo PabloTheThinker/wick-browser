@@ -2,12 +2,13 @@
 
 ## Headline
 
-The vault now behaves like a human password manager for agents: **suggest** a login, **autofill** only on a matching origin, **never** put the secret in model context. Observe loops are faster. Chromium gets the same private-network / dangerous-URL guards as the light path.
+The vault now behaves like a human password manager for agents: **suggest** a login, **autofill** only on a matching origin, **never** put the secret in model context. Wick is **standalone Chromium** for observe and act (Lightpanda is opt-in only).
 
 ## New
 
 - `wick vault suggest --url` / `autofill` — recipe with refs, form hints, and `wick act login` (no secrets)
 - `wick act login URL` — goto + origin-bound username/password/(otp) fill + submit
+- `wick act login URL --after-challenge [ms]` — wait until a challenge widget is gone, then fill (does not solve)
 - Origin matching: exact host + `www` alias; optional `--allow-subdomains` on `vault set`
 - HTTPS-saved credentials never fill on HTTP pages
 - RFC 6238 TOTP: store `totp` / `otpauth://…`, fill `vault://name/otp`
@@ -23,8 +24,13 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 - `WICK_VAULT_REQUIRE_GRANT` / policy `vault_require_grant` — empty grants deny resolve/fill
 - Two-step login: retry fill + Continue/Next when the password field is not visible yet
 - Challenge detect: vault login/secrets halt; desktop computer-use may click/type the widget
+- GeeTest / Friendly Captcha / AWS WAF / DataDome / PerimeterX markers + late-loaded iframe URLs (fixtures, not live GitHub/Google/banks)
+- `WICK_VAULT_STRICT` / policy `vault_strict` — grant-required + relock after fill (off by default)
+- `wick vault harden` — passphrase mode, delete standing `master.key`
+- `wick challenge URL` — observe-only detect on a public page (never login, never solve)
+- `wick vault backup` / `restore` (encrypted file snapshot, not live sync) and hash-chained `wick vault audit`
 - WebRTC IP guard + Client Hint reduction; fingerprint *probes* reported, farbling not claimed
-- Passkey filewrap seal (`passkey.wrap` 0600); honest TPM/PKCS#11 probe (`hsm: false` here)
+- Passkey filewrap seal (`passkey.wrap.enc` under the vault wrap key); honest TPM/PKCS#11 probe (`hsm: false` here)
 - Capability profiles: `WICK_PROFILE=observe-only|safe-act|full-act`
 - Outbound allowlist: `WICK_ALLOW_HOSTS=example.com,.github.com`
 - Outbound denylist: `WICK_BLOCK_HOSTS` (deny wins)
@@ -48,10 +54,14 @@ The vault now behaves like a human password manager for agents: **suggest** a lo
 ## Agent loop
 
 ```bash
+wick skill
 wick vault set example --username me --url https://example.com/login
 wick snap https://example.com/login --fast
 wick vault suggest --url https://example.com/login
 wick act login https://example.com/login
+wick snap                          # here — no second goto
+# or after computer-use on a widget:
+wick act login https://example.com/login --after-challenge
 ```
 
 ## Computer use

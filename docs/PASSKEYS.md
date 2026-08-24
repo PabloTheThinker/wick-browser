@@ -43,7 +43,7 @@ rpId must match the page host (`www` alias allowed). Grants (`wick vault grant -
 
 ## Seal layer (not a fake TPM)
 
-New passkeys wrap the PKCS#8 with a dedicated AES-256-GCM key (`passkey.wrap`, mode `0600`, AAD bound to entry name + rpId) before it goes into the vault item. That is **filewrap**, not an HSM.
+New passkeys wrap the PKCS#8 with a dedicated AES-256-GCM key sealed as `passkey.wrap.enc` under the vault wrap key (legacy raw `passkey.wrap` is migrated, AAD bound to entry name + rpId) before it goes into the vault item. That is **filewrap**, not an HSM.
 
 This host / most agent VMs have no `/dev/tpmrm0` and no PKCS#11 token. `wick vault doctor` reports `hsm: false`, `tpm: false`, `seal: filewrap`. Set `WICK_PASSKEY_REQUIRE_HSM=1` (or policy `passkey_require_hsm`) to refuse create **and** CDP export until real hardware is present — Wick will not pretend.
 

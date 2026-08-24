@@ -13,6 +13,7 @@ cron wrappers, sandboxes). A policy file gives it one place to pin the rules:
       "allow_private": false,
       "require_approval": ["login", "passkey"],
       "vault_require_grant": true,
+      "vault_strict": false,
       "halt_on_challenge": true,
       "challenge_computer_use": false,
       "passkey_require_hsm": false
@@ -26,6 +27,7 @@ Merge rules (env stays authoritative where it is more explicit, deny wins):
   allow_private       WICK_ALLOW_PRIVATE wins when set
   require_approval    union of file + WICK_REQUIRE_APPROVAL (true = all sensitive)
   vault_require_grant WICK_VAULT_REQUIRE_GRANT wins when set
+  vault_strict        WICK_VAULT_STRICT wins when set (grant + relock)
   halt_on_challenge   WICK_HALT_ON_CHALLENGE wins when set (default on)
   challenge_computer_use WICK_CHALLENGE_COMPUTER_USE wins when set
   passkey_require_hsm WICK_PASSKEY_REQUIRE_HSM wins when set
@@ -48,6 +50,7 @@ KEYS = (
     "allow_private",
     "require_approval",
     "vault_require_grant",
+    "vault_strict",
     "halt_on_challenge",
     "challenge_computer_use",
     "passkey_require_hsm",
@@ -188,6 +191,7 @@ def validate(obj: Any) -> dict[str, Any]:
     for key in (
         "allow_private",
         "vault_require_grant",
+        "vault_strict",
         "halt_on_challenge",
         "challenge_computer_use",
         "passkey_require_hsm",
@@ -242,6 +246,7 @@ def _overlay(obj: dict[str, Any]) -> dict[str, Any]:
     for key in (
         "allow_private",
         "vault_require_grant",
+        "vault_strict",
         "halt_on_challenge",
         "challenge_computer_use",
         "passkey_require_hsm",
@@ -285,6 +290,13 @@ def effective() -> dict[str, Any]:
         else bool(file_policy.get("vault_require_grant") or False)
     )
 
+    env_strict = _env_bool("WICK_VAULT_STRICT")
+    vault_strict_flag = (
+        env_strict
+        if env_strict is not None
+        else bool(file_policy.get("vault_strict") or False)
+    )
+
     env_halt = _env_bool("WICK_HALT_ON_CHALLENGE")
     halt_on_challenge = (
         env_halt
@@ -316,6 +328,7 @@ def effective() -> dict[str, Any]:
         "allow_private": allow_private,
         "require_approval": list(file_policy.get("require_approval") or []),
         "vault_require_grant": require_grant,
+        "vault_strict": vault_strict_flag,
         "halt_on_challenge": halt_on_challenge,
         "challenge_computer_use": challenge_computer_use,
         "passkey_require_hsm": passkey_require_hsm,
@@ -332,6 +345,11 @@ def require_approval() -> list[str]:
 def vault_require_grant() -> bool:
     """True when a vault fill needs a fresh out-of-band grant."""
     return bool(effective()["vault_require_grant"])
+
+
+def vault_strict() -> bool:
+    """True when grants are required and the vault relocks after fill."""
+    return bool(effective()["vault_strict"])
 
 
 def write_policy(obj: Any, dest: Path) -> dict[str, Any]:

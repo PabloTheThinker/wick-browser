@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -59,6 +60,11 @@ _MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("hcaptcha", ("hcaptcha.com", "hcaptcha", "h-captcha")),
     ("recaptcha", ("google.com/recaptcha", "recaptcha/api", "g-recaptcha", "recaptcha")),
     ("funcaptcha", ("funcaptcha", "arkoselabs", "arkose")),
+    ("geetest", ("geetest_holder", "geetest.com", "geetest")),
+    ("friendlycaptcha", ("frc-captcha", "friendlycaptcha.com", "friendly-captcha")),
+    ("aws_waf", ("token.awswaf.com", "awswaf.com/challenge", "aws-waf")),
+    ("datadome", ("captcha-delivery.com", "datadome.co", "datadome")),
+    ("perimeterx", ("px-captcha", "perimeterx")),
     ("cloudflare", ("just a moment", "cdn-cgi/challenge", "cf-browser-check", "cf-challenge")),
     ("captcha", ("captcha",)),
 )
@@ -205,8 +211,9 @@ def detect(
 
 
 def page_challenge(page) -> dict[str, Any]:
-    """Inspect a live Chromium page. Best-effort; never throws into the caller."""
+    """Inspect a live Chromium page, including iframe URLs (late-loaded widgets)."""
     url = title = html = ""
+    frames: list[str] = []
     try:
         url = page.url
     except Exception:
@@ -219,7 +226,125 @@ def page_challenge(page) -> dict[str, Any]:
         html = page.content()[:40000]
     except Exception:
         html = ""
-    return detect(url=url, title=title, html=html)
+    try:
+        for fr in getattr(page, "frames", []) or []:
+            frames.append(str(getattr(fr, "url", "") or ""))
+    except Exception:
+        pass
+    extra = " ".join(frames)
+    return detect(url=url, title=title, html=(html + " " + extra).strip())
+
+
+def probe(
+    url: str,
+    *,
+    html: str | None = None,
+    title: str | None = None,
+    excerpt: str | None = None,
+) -> dict[str, Any]:
+    """Observe-only challenge detect. Never logs in. Never solves.
+
+    Pass ``html`` for fixtures. Without it, GET the public URL (no cookies,
+    no credentials). Private-network targets are refused.
+    """
+    base: dict[str, Any] = {
+        "product": "wick",
+        "mode": "observe",
+        "login": False,
+        "solves": False,
+        "url": (url or "")[:240],
+    }
+    try:
+        import origins as wick_origins
+
+        if wick_origins.is_dangerous_url(url):
+            return {**base, "ok": False, "error": "dangerous_url"}
+        if wick_origins.is_private_url(url) and not wick_origins.allow_private_override():
+            if html is None:
+                return {**base, "ok": False, "error": "private_url"}
+    except Exception:
+        pass
+
+    fetched = False
+    page_html = html
+    page_title = title
+    if page_html is None:
+        try:
+            fetched_html, fetched_title = _fetch_public(url)
+        except Exception as e:
+            return {**base, "ok": False, "error": "fetch_failed", "detail": str(e)[:120]}
+        page_html = fetched_html
+        page_title = page_title or fetched_title
+        fetched = True
+
+    hit = detect(url=url, title=page_title, html=page_html, excerpt=excerpt)
+    return {
+        **base,
+        **hit,
+        "ok": True,
+        "login": False,
+        "solves": False,
+        "mode": "observe",
+        "fetched": fetched,
+    }
+
+
+def _fetch_public(url: str) -> tuple[str, str]:
+    """GET public HTML. No cookie jar. No credentials. Timeout 12s."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Wick-observe/0.9 (+https://github.com/PabloTheThinker/wick-browser)",
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            raw = resp.read(120000)
+            final = str(getattr(resp, "url", "") or url)
+    except urllib.error.HTTPError as e:
+        raw = e.read(120000) if e.fp else b""
+        final = url
+        if e.code >= 500 and not raw:
+            raise
+    except Exception:
+        raise
+    try:
+        import origins as wick_origins
+
+        if wick_origins.is_private_url(final) and not wick_origins.allow_private_override():
+            raise ValueError("private_url")
+    except ImportError:
+        pass
+    text = raw.decode("utf-8", errors="replace")
+    title = ""
+    low = text.lower()
+    i = low.find("<title")
+    if i >= 0:
+        j = low.find(">", i)
+        k = low.find("</title>", j)
+        if j >= 0 and k > j:
+            title = re.sub(r"\s+", " ", text[j + 1 : k]).strip()[:160]
+    return text, title
+
+
+def wait_cleared(page, timeout_ms: int = 15000, interval_ms: int = 250) -> dict[str, Any] | None:
+    """Poll until no challenge widget is visible. None = cleared. Last hit if not."""
+    last = page_challenge(page)
+    if not last.get("found"):
+        return None
+    deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
+    pause = max(0.005, int(interval_ms) / 1000.0)
+    while time.monotonic() < deadline:
+        time.sleep(pause)
+        last = page_challenge(page)
+        if not last.get("found"):
+            return None
+    return last
 
 
 def deny_if_halted(
