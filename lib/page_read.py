@@ -443,11 +443,16 @@ def read_payload(
         if sections:
             sections = filter_sections(sections, query=query)
             paragraphs = [p for s in sections for p in (s.get("paragraphs") or [])]
+            headings = [
+                {"level": int(s.get("level") or 2), "text": s["heading"]}
+                for s in sections
+                if s.get("heading")
+            ]
         if not paragraphs:
             paragraphs = filter_paragraphs(shaped["paragraphs"], query)
-        hit_heads = filter_headings(headings, query)
-        if hit_heads:
-            headings = hit_heads
+            hit_heads = filter_headings(shaped["headings"], query)
+            if hit_heads:
+                headings = hit_heads
     excerpt = excerpt_from(
         paragraphs=paragraphs,
         text="" if focused else (snap.get("text") or snap.get("excerpt") or ""),

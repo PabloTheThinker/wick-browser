@@ -149,6 +149,9 @@ class TestShapeObserve(unittest.TestCase):
         self.assertTrue(out["paragraphs"])
         self.assertTrue(all("rfc" in p.lower() for p in out["paragraphs"]))
         self.assertFalse(any("cookie banners" in p.lower() for p in out["paragraphs"]))
+        heads = [h["text"] for h in out["headings"]]
+        self.assertTrue(any("Why these" in t for t in heads))
+        self.assertFalse(any("agents" in t.lower() for t in heads))
 
     def test_read_payload_section_keeps_one_heading(self):
         snap = {"ok": True, "url": "https://example.com/", **ARTICLE}
