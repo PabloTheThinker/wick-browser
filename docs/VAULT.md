@@ -85,8 +85,8 @@ Agents request mail via the token-gated local API; Wick only holds the token as 
 
 | Layer | Wick |
 |-------|------|
-| Tracker / ad lists | `wick shields` (EasyList / EasyPrivacy / Fanboy) |
-| SSRF / private net | Lightpanda path block (default on) |
+| Tracker / ad lists | Downloadable via `wick shields --update`; not applied as Chromium request filters |
+| SSRF / private net | Observe and Chromium goto blocked (default on) |
 | Privacy headers | DNT / Sec-GPC |
 | Session isolation | `WICK_SESSION` cookie jars + Chromium profiles |
 | Credentials | **Vault refs** — not page cookies alone |

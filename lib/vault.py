@@ -933,7 +933,7 @@ def backends_status() -> dict[str, Any]:
             "note": "Store the bearer token in local vault; never commit it",
         },
         "brave_combine": {
-            "shields": "wick shields (EasyList/EasyPrivacy, SSRF block, privacy headers)",
+            "shields": "wick shields (SSRF block, privacy headers, session isolation)",
             "sessions": "WICK_SESSION cookie + Chromium profile isolation",
             "vault": "secret refs for fill — secrets stay out of agent context",
             "not_claimed": "Brave fingerprint farbling / Camoufox anti-bot",

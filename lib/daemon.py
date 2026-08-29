@@ -168,6 +168,12 @@ def main() -> int:
 
         page = _context.pages[0] if _context.pages else _context.new_page()
         try:
+            import request_guard as wick_rg
+
+            wick_rg.install_playwright_routes(_context)
+        except Exception:
+            pass
+        try:
             _context.add_init_script(
                 "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
                 "window.chrome=window.chrome||{runtime:{}};"

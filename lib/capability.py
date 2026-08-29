@@ -91,7 +91,6 @@ _OBSERVE_CMDS = frozenset(
         "approve",
         "history",
         "shields",
-        "xexam",
         "prune",
         "install-engine",
     }

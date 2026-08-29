@@ -4,8 +4,8 @@
 
 | Goal | State |
 |------|--------|
-| Brave **network** shields | **Done** — EasyList, EasyPrivacy, Fanboy, URL blocks, SSRF, DNT/GPC |
-| Brave **fingerprint farbling** | **Not done** — needs Camoufox/Brave engine (not LP flags) |
+| Brave **network** shields | **Partial** — SSRF, DNT/GPC, session isolation. EasyList files downloadable; not applied as Chromium filters |
+| Brave **fingerprint farbling** | **Not done** — needs Camoufox/Brave engine |
 | Browser-Use-like agent ops | **Done** — sessions, act, run, tabs, pdf, history, get, probe |
 | Free / no paid SaaS required | **Yes** |
 
@@ -15,7 +15,7 @@
 wick doctor | version | ensure | start | stop | status
 wick shields [--update] | shields-bench URL
 wick session list|new|use|save|path
-wick open|fetch|tree|batch|links|probe|xexam
+wick open|fetch|tree|batch|links|probe
 wick get URL [-o path] [--browser]
 wick history [--limit N] [--clear]
 wick act <goto|click|fill|select|check|press|wait|eval|content|title|

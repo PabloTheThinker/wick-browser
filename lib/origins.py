@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import socket
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -56,9 +57,24 @@ DANGEROUS_SCHEMES = frozenset(
         "edge",
         "devtools",
         "view-source",
+        "ftp",
+        "ftps",
     }
 )
 HTTP_SCHEMES = frozenset({"http", "https"})
+
+# Cloud / cluster metadata names that are not always RFC1918 literals.
+METADATA_HOSTS = frozenset(
+    {
+        "metadata",
+        "metadata.google.internal",
+        "metadata.goog",
+        "metadata.internal",
+        "kubernetes",
+        "kubernetes.default",
+        "kubernetes.default.svc",
+    }
+)
 
 
 def is_dangerous_url(url: str | None) -> bool:
@@ -125,28 +141,83 @@ def normalize_agent_url(url: str | None) -> str:
     return s
 
 
-def is_private_host(host: str | None) -> bool:
-    h = (host or "").strip().lower().rstrip(".")
-    if not h:
-        return False
-    if h in {"localhost", "localhost.localdomain", "0.0.0.0", "::1", "ip6-localhost"}:
-        return True
-    if h.endswith(".localhost") or h.endswith(".local") or h.endswith(".internal"):
-        return True
-    if h.endswith(".home.arpa") or h.endswith(".lan"):
-        return True
-    try:
-        ip = ipaddress.ip_address(h)
-    except ValueError:
-        return False
-    return bool(
+def _ip_is_private(ip: ipaddress._BaseAddress) -> bool:
+    if bool(
         ip.is_private
         or ip.is_loopback
         or ip.is_link_local
         or ip.is_reserved
         or ip.is_multicast
         or ip.is_unspecified
-    )
+    ):
+        return True
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return bool(
+            mapped.is_private
+            or mapped.is_loopback
+            or mapped.is_link_local
+            or mapped.is_reserved
+            or mapped.is_multicast
+            or mapped.is_unspecified
+        )
+    return False
+
+
+def is_private_host(host: str | None) -> bool:
+    h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return False
+    if h in {"localhost", "localhost.localdomain", "0.0.0.0", "::1", "ip6-localhost"}:
+        return True
+    if h in METADATA_HOSTS:
+        return True
+    if h.endswith(".localhost") or h.endswith(".local") or h.endswith(".internal"):
+        return True
+    if h.endswith(".home.arpa") or h.endswith(".lan") or h.endswith(".corp"):
+        return True
+    try:
+        ip = ipaddress.ip_address(int(h) if h.isdigit() else h)
+    except ValueError:
+        return False
+    return _ip_is_private(ip)
+
+
+def resolve_check_enabled() -> bool:
+    raw = (os.environ.get("WICK_RESOLVE_CHECK") or "1").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
+def resolve_host_ips(host: str | None) -> list[str]:
+    """Best-effort A/AAAA lookup. Empty on failure (fail-open for the caller)."""
+    h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return []
+    try:
+        infos = socket.getaddrinfo(h, None, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return []
+    out: list[str] = []
+    for info in infos:
+        if not info[4]:
+            continue
+        ip = str(info[4][0])
+        if ip and ip not in out:
+            out.append(ip)
+    return out
+
+
+def host_resolves_private(host: str | None) -> bool:
+    """True when any resolved address is private/metadata. DNS errors are False."""
+    h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return False
+    if is_private_host(h):
+        return True
+    for ip in resolve_host_ips(h):
+        if is_private_host(ip):
+            return True
+    return False
 
 
 def is_private_url(url: str | None) -> bool:
@@ -229,8 +300,13 @@ def allow_private_override() -> bool:
     return os.environ.get("WICK_ALLOW_PRIVATE", "0") == "1"
 
 
-def guard_fetch_url(url: str | None) -> dict[str, Any] | None:
-    """Return an error dict if the URL must not be fetched; else None."""
+def guard_fetch_url(url: str | None, *, resolve: bool | None = None) -> dict[str, Any] | None:
+    """Return an error dict if the URL must not be fetched; else None.
+
+    `resolve` defaults to WICK_RESOLVE_CHECK (on). DNS failure is fail-open so
+    a transient lookup does not take the web offline; a successful lookup to a
+    private/metadata address is denied.
+    """
     s = (url or "").strip()
     if not s:
         return {"ok": False, "product": "wick", "error": "no_url"}
@@ -242,4 +318,23 @@ def guard_fetch_url(url: str | None) -> dict[str, Any] | None:
         return {"ok": False, "product": "wick", "error": str(e), "url": s[:120]}
     if is_private_url(normalized) and not allow_private_override():
         return {"ok": False, "product": "wick", "error": "private_url", "url": normalized[:120]}
+    do_resolve = resolve_check_enabled() if resolve is None else bool(resolve)
+    if do_resolve and not allow_private_override():
+        origin = parse_origin(normalized)
+        host = str((origin or {}).get("host") or "")
+        if host and not is_private_host(host) and host_resolves_private(host):
+            return {
+                "ok": False,
+                "product": "wick",
+                "error": "resolved_private",
+                "url": normalized[:120],
+                "host": host,
+                "hint": "Hostname resolved to a private or metadata address (SSRF).",
+            }
     return None
+
+
+def is_parking_url(url: str | None) -> bool:
+    """about:blank and similar internal parks — not agent-requested targets."""
+    s = (url or "").strip().lower()
+    return s in {"about:blank", "about:newtab", ""} or s.startswith("chrome://")

@@ -1,6 +1,6 @@
 # Wick — the browser for agents
 
-Wick is a free, open-source **agent browser**: a command-line tool built for AI agents that read the web constantly and touch it rarely. One clean JSON surface. Two engines underneath — **light recon** (Lightpanda) for observing, **heavy contact** (Chromium) for the moments you must click, type, or render. That split is the whole philosophy: most of an agent's life is reading, so the flame stays thin until interaction actually matters.
+Wick is a free, open-source **agent browser**: a command-line tool built for AI agents that read the web constantly and touch it rarely. One clean JSON surface. Headless Chromium underneath — observe with `snap` / `plan` / `ask`, escalate to click, type, or render only when the page must move.
 
 Everything runs on your machine. No cloud relay, no hosted session, no telemetry.
 
@@ -12,7 +12,7 @@ A human browser optimizes for pixels. An agent needs structure: titles, excerpts
 
 - Builders of local AI agents that **read** the web and occasionally **act** on it
 - Harness and framework authors who want tool schemas and stdio RPC, not screen-scraping wrappers
-- Operators who want tracker blocking and session isolation without assembling a browser stack by hand
+- Operators who want session isolation and honest network guards without assembling a browser stack by hand
 
 ## The loop: observe → plan → ask → act
 
@@ -35,7 +35,7 @@ Wick 0.7 is built to be a tool, not a destination:
 
 ## Shields, stated honestly
 
-Network blocking is on by default (`WICK_SHIELDS=1`): EasyList-style tracker blocking, private-network fetch blocking on the light path, CDP bound to loopback only, and per-session cookie jars and Chromium profiles so tasks don't bleed into each other.
+Network blocking is on by default (`WICK_SHIELDS=1`): private-network fetch blocking, CDP bound to loopback only, and per-session Chromium profiles so tasks don't bleed into each other.
 
 What Wick does **not** claim: fingerprint stealth, CAPTCHA bypass, or victory over serious anti-bot systems. Observe outputs are explicitly flagged `untrusted_content: true` with an injection warning — page text is data, never instructions. We label what the shields do and where they stop, because an agent operator making security decisions on marketing copy is a liability, not a customer.
 
@@ -43,13 +43,12 @@ What Wick does **not** claim: fingerprint stealth, CAPTCHA bypass, or victory ov
 
 - `--fast` uses `domcontentloaded` plus a short settle wait across snap/plan/ask/open
 - `wick batch` runs many URLs through one process
-- The light engine handles the read-heavy majority of calls; Chromium spins up only on demand
-- Compact snapshots by design — an observation should cost tokens proportional to its usefulness
+- Compact snapshots by design; Chromium stays up for a session so snap then act is cheap
 
 ## Non-goals
 
 - **Not a human browser.** No GUI, no extensions, no Chrome replacement.
-- **Not a stealth kit.** Shields block trackers and private-network probes; they do not forge fingerprints.
+- **Not a stealth kit.** Shields block private-network probes, isolate sessions, and abort a small tracker URL list; they do not forge fingerprints or parse EasyList.
 - **Not a SaaS.** No hosted browsers, no accounts, no usage meters.
 - **Not a framework.** Wick is the browsing layer. Your agent's brain, memory, and goals live in your stack.
 
@@ -69,4 +68,4 @@ If you're choosing an agent browser in 2026, the question is not "can it drive a
 
 ## Version and license
 
-Public surface tracks **0.9**: observe + act + sessions + shields + **origin-bound vault** (Chrome/Brave-style autofill via `wick act login`, TOTP, Proton Pass/KeePassXC/AgentMail refs), plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; optional engines (Lightpanda, Chromium via Playwright) keep their own licenses. Contributions welcome.
+Public surface tracks **0.9**: observe + act + sessions + shields + **origin-bound vault** (Chrome/Brave-style autofill via `wick act login`, TOTP, Proton Pass/KeePassXC/AgentMail refs), plus `wick tools` and `wick rpc stdio`. MIT-licensed CLI; Chromium via Playwright. Contributions welcome.

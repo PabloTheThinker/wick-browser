@@ -22,8 +22,5 @@ SOFTWARE.
 
 ---
 
-Optional third-party engine: Lightpanda (https://github.com/lightpanda-io/browser)
-is separate software under the GNU Affero General Public License v3. Wick does
-not vendor Lightpanda source; it may invoke a user-installed binary as an
-external process. Obtain and comply with Lightpanda's license independently.
-Chromium / Playwright components remain under their respective licenses.
+Chromium / Playwright are separate software under their own licenses. Wick
+invokes them as an external process and does not vendor their sources.

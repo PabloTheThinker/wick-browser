@@ -4,7 +4,7 @@
 
 Not a human browser with a side door for bots — a tool built so **agents** can see the page, pick a target, and finish the job. Headless by default. Full enough when the work gets close: tabs, forms, PDF, downloads, sessions, shields.
 
-*Wick brothers: light recon + heavy contact — one mission, clean tools, no wasted motion.*
+*Headless Chromium. One JSON surface. No wasted motion.*
 
 ```bash
 wick snap https://example.com/ --profile micro         # cheapest observe (tree only)
@@ -19,10 +19,10 @@ wick act  click 'role=link[name="More information"]'   # act: hints resolve dire
 
 | Need | Wick |
 |------|------|
-| Agent-friendly page text | Markdown / semantic tree (Lightpanda) |
+| Agent-friendly page text | Markdown / semantic tree from headless Chromium |
 | Next-step planning | `plan` (goal-agnostic suggestions), `ask` (fuzzy target filter, no LLM) |
-| Less RAM than always-on Chrome | Lightpanda ~tens of MB; Chromium on demand |
-| Tracker / ad blocking | EasyList + EasyPrivacy + Fanboy + custom URL blocks |
+| One engine | Chromium via Playwright — observe and act |
+| Tracker / ad lists | Chromium blocks a small built-in URL list + `wick-block-urls.txt`. EasyList files download but are not parsed |
 | Sessions | Isolated cookie jars + Chromium profiles |
 | Credentials | Origin-bound vault + `wick act login` (Chrome/Brave-style autofill; Proton Pass / KeePassXC refs) |
 | Automation | `act`, multi-tab, PDF, playbooks (`run`) |
@@ -30,7 +30,7 @@ wick act  click 'role=link[name="More information"]'   # act: hints resolve dire
 
 ## Honest security scope
 
-Wick aims for **Brave-like network privacy** (list blocking, SSRF guard, privacy headers, session isolation) plus an **open-source agent password vault** (local store, Proton Pass / KeePassXC / AgentMail refs).
+Wick aims for **Brave-like network privacy** (SSRF guard, privacy headers, session isolation) plus an **open-source agent password vault** (local store, Proton Pass / KeePassXC / AgentMail refs). EasyList-style files can be downloaded; they are not applied as Chromium request filters.
 
 It does **not** claim Brave fingerprint farbling (canvas/WebGL) or Camoufox-class anti-bot. Those need specialized engines. See [docs/SECURITY.md](docs/SECURITY.md), [docs/VAULT.md](docs/VAULT.md), and [docs/SHIELDS-AND-ACTIONS.md](docs/SHIELDS-AND-ACTIONS.md).
 
@@ -38,13 +38,13 @@ CDP stays on **loopback** by default. Proxy credentials and vault secrets are ne
 
 ## Install
 
-**Requirements:** Linux x86_64 (primary), Python 3.10+, curl. Optional: [Lightpanda](https://github.com/lightpanda-io/browser) for the fast path.
+**Requirements:** Linux x86_64 (primary), Python 3.10+, curl. Playwright Chromium is installed by `make install`.
 
 ```bash
 git clone https://github.com/PabloTheThinker/wick-browser.git
 cd wick-browser
 make install                 # or ./scripts/install.sh
-wick install-engine          # optional Lightpanda nightly
+wick install-engine          # Playwright Chromium if the venv is missing it
 make doctor
 wick open https://example.com/
 ```
@@ -54,7 +54,7 @@ Data directory: `~/.wick/` (override with `WICK_HOME`).
 ## Quick commands
 
 ```bash
-# Observe & plan (Lightpanda — light recon)
+# Observe & plan
 wick ensure
 wick snap URL --profile micro # cheapest situation report (tree only)
 wick snap URL --fast          # tree + excerpt in parallel
@@ -87,7 +87,7 @@ wick vault suggest --url https://example.com/login
 wick act login https://example.com/login
 # or: wick act fill 'css=input[type=password]' 'vault://mysite/password'
 
-# Act (Chromium — heavy contact)
+# Act
 wick act goto URL
 wick act click 'role=link[name="More information"]'   # role= hints from snap/plan/ask
 wick act click "css=button.submit"
@@ -108,14 +108,9 @@ wick metrics
 wick doctor | version | status
 ```
 
-## Engines
+## Engine
 
-| Engine | Role | Port (loopback) |
-|--------|------|------------------|
-| **Lightpanda** (default) | Fetch, markdown, tree, shields | `9333` |
-| **Chromium** (Playwright) | Clicks, tabs, PDF, screenshots | `9222` |
-
-Lightpanda is **AGPL** third-party software invoked as an external binary — not vendored into this MIT repo. Chromium comes via Playwright into a local venv.
+Headless **Chromium** via Playwright. Observe (`snap` / `plan` / `ask`) and act (`click` / `fill` / `cu`) share one daemon on loopback CDP (`WICK_CHROME_PORT`, default `9222`).
 
 ## Configuration (env)
 
@@ -144,7 +139,6 @@ Lightpanda is **AGPL** third-party software invoked as an external binary — no
 | `WICK_REDUCE_CLIENT_HINTS` | `1` | Drop User-Agent Client Hints (privacy, not UA spoof) |
 | `WICK_PASSKEY_REQUIRE_HSM` | `0` | Refuse passkey create unless a TPM/PKCS#11 token is present |
 | `WICK_SESSION_AUTO_DROP` | `0` | Drop ephemeral session on process exit |
-| `WICK_LP_PORT` | `9333` | Lightpanda CDP |
 | `WICK_CHROME_PORT` | `9222` | Chromium CDP |
 
 ## Project layout
@@ -160,7 +154,7 @@ wick-browser/
   Makefile
   ABOUT.md
   AGENTS.md          # agent brief
-  LICENSE            # MIT (+ third-party engine note)
+  LICENSE            # MIT
 ```
 
 ## Documentation
@@ -180,7 +174,7 @@ wick-browser/
 
 ## License
 
-MIT for Wick orchestration. Optional Lightpanda engine is AGPL — see [LICENSE](LICENSE).
+MIT for Wick. Chromium / Playwright keep their own licenses — see [LICENSE](LICENSE).
 
 ## Contributing
 

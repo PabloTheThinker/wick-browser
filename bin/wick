@@ -2,7 +2,7 @@
 """Wick — free agent browser for AI agents and automation.
 
 A thin flame for machines. MIT orchestration layer.
-Optional engines: Lightpanda binary (AGPL, external) · Chromium headless-shell.
+Headless Chromium via Playwright.
 
 No paid API. CDP loopback only.
 """
@@ -28,10 +28,6 @@ try:
     import shields as wick_shields
 except Exception:
     wick_shields = None  # type: ignore
-try:
-    import stats_fetch as wick_stats
-except Exception:
-    wick_stats = None
 try:
     import history as wick_history
 except Exception:
@@ -105,29 +101,23 @@ VENV_PY = ROOT / ".venv" / "bin" / "python3"
 MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 CHROME_PORT = int(os.environ.get("WICK_CHROME_PORT", "9222"))
-LP_PORT = int(os.environ.get("WICK_LP_PORT", "9333"))
-DEFAULT_ENGINE = os.environ.get("WICK_ENGINE", "auto")  # auto|lightpanda|chromium
 
 
-def find_lightpanda() -> Path | None:
-    cands = [
-        os.environ.get("WICK_LIGHTPANDA"),
-        str(ROOT / "bin" / "lightpanda"),
-        str(ENGINES / "lightpanda"),
-        "/usr/local/bin/lightpanda",
-        str(Path.home() / ".local" / "bin" / "lightpanda"),
-        str(Path.home() / ".wick" / "engines" / "lightpanda"),
-    ]
-    for c in cands:
-        if not c:
-            continue
-        p = Path(c)
-        try:
-            if p.is_file() and os.access(p, os.X_OK):
-                return p.resolve() if p.exists() else p
-        except OSError:
-            continue
-    return None
+def find_playwright_python() -> Path | None:
+    """Python that can import Playwright — venv first, then this interpreter."""
+    if VENV_PY.is_file():
+        return VENV_PY
+    try:
+        import playwright  # noqa: F401
+
+        return Path(sys.executable)
+    except Exception:
+        return None
+
+
+def pw_python() -> Path:
+    """Interpreter used to launch Chromium helpers. Prefer venv, never empty."""
+    return find_playwright_python() or VENV_PY
 
 
 def ensure() -> None:
@@ -177,19 +167,8 @@ def alive(pid: int) -> bool:
         return False
 
 
-def lp_up() -> bool:
-    return cdp_version(LP_PORT) is not None
-
-
 def chrome_up() -> bool:
     return cdp_version(CHROME_PORT) is not None
-
-
-def resolve_engine(requested: str | None) -> str:
-    eng = requested or DEFAULT_ENGINE
-    if eng == "auto":
-        return "lightpanda" if find_lightpanda() else "chromium"
-    return eng
 
 
 def disk_usage(path: Path) -> str:
@@ -216,32 +195,6 @@ def _redact_cmd_tail(parts: list[str]) -> list[str]:
     return out
 
 
-def lightpanda_symlink_info() -> dict:
-    link = ROOT / "bin" / "lightpanda"
-    info: dict = {"path": str(link)}
-    if link.is_symlink():
-        info["is_symlink"] = True
-        info["exists"] = True
-        try:
-            target = link.resolve(strict=True)
-            info["target"] = str(target)
-            info["resolves"] = target.is_file() and os.access(target, os.X_OK)
-        except OSError:
-            try:
-                info["target"] = str(link.readlink())
-            except OSError:
-                info["target"] = None
-            info["resolves"] = False
-    elif link.exists():
-        info["is_symlink"] = False
-        info["exists"] = True
-        info["target"] = str(link.resolve())
-        info["resolves"] = link.is_file() and os.access(link, os.X_OK)
-    else:
-        info.update({"is_symlink": False, "exists": False, "resolves": False, "target": None})
-    return info
-
-
 def extract_md_links(md: str) -> list[dict]:
     """Markdown links only (skip images). Dedupe hrefs preserve order."""
     out: list[dict] = []
@@ -260,73 +213,6 @@ def extract_md_links(md: str) -> list[dict]:
     return out
 
 
-def start_lp() -> dict:
-    ensure()
-    lp_bin = find_lightpanda()
-    if lp_up():
-        v = cdp_version(LP_PORT) or {}
-        return {
-            "ok": True,
-            "already": True,
-            "product": "wick",
-            "engine": "lightpanda",
-            "cdp": f"http://127.0.0.1:{LP_PORT}",
-            "browser": v.get("Browser"),
-        }
-    if not lp_bin:
-        return {
-            "ok": False,
-            "product": "wick",
-            "error": "lightpanda_not_found",
-            "hint": "wick install-engine or set WICK_LIGHTPANDA",
-        }
-    log = open(LOGS / "lightpanda.log", "a", encoding="utf-8")
-    cache = HOME / "http-cache"
-    cache.mkdir(parents=True, exist_ok=True)
-
-    serve_cmd = [
-        str(lp_bin), "serve",
-        "--host", "127.0.0.1",
-        "--port", str(LP_PORT),
-        "--log-level", "warn",
-        "--block-private-networks",
-        "--http-cache-dir", str(cache),
-        "--http-cache-entry-limit", "2000",
-        "--user-agent-suffix", f" Wick/{VERSION.split('.')[0]}.{VERSION.split('.')[1]}",
-        "--disable-workers",
-    ]
-    if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
-        try:
-            for lst in wick_shields.adblock_lists(True):
-                serve_cmd.extend(["--adblock-lists", str(lst)])
-            for pat in wick_shields.block_url_patterns():
-                serve_cmd.extend(["--block-urls", pat])
-        except Exception:
-            pass
-    proc = subprocess.Popen(
-        serve_cmd,
-
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    write_pid("lightpanda", proc.pid)
-    for _ in range(40):
-        time.sleep(0.12)
-        v = cdp_version(LP_PORT)
-        if v:
-            meta = {
-                "pid": proc.pid,
-                "engine": "lightpanda",
-                "cdp": f"http://127.0.0.1:{LP_PORT}",
-                "browser": v.get("Browser"),
-                "started": time.time(),
-            }
-            (STATE / "lightpanda.json").write_text(json.dumps(meta, indent=2) + "\n")
-            return {"ok": True, "product": "wick", **meta}
-    return {"ok": False, "product": "wick", "error": "lp_timeout", "pid": proc.pid}
-
-
 def start_chrome(xvfb: bool = False) -> dict:
     ensure()
     if chrome_up():
@@ -339,12 +225,12 @@ def start_chrome(xvfb: bool = False) -> dict:
             "cdp": f"http://127.0.0.1:{CHROME_PORT}",
             "browser": v.get("Browser"),
         }
-    if not VENV_PY.exists():
+    if not find_playwright_python():
         return {
             "ok": False,
             "product": "wick",
             "error": "playwright_venv_missing",
-            "hint": "cd wick && python3 -m venv .venv && .venv/bin/pip install playwright && .venv/bin/playwright install --only-shell chromium",
+            "hint": "cd wick && python3 -m venv .venv && .venv/bin/pip install playwright && .venv/bin/playwright install chromium",
         }
     env = os.environ.copy()
     env["WICK_HOME"] = str(HOME)
@@ -364,7 +250,7 @@ def start_chrome(xvfb: bool = False) -> dict:
     Path(env["WICK_DOWNLOADS"]).mkdir(parents=True, exist_ok=True)
     log = open(LOGS / "chromium.log", "a", encoding="utf-8")
     proc = subprocess.Popen(
-        [str(VENV_PY), str(ROOT / "lib" / "daemon.py")],
+        [str(pw_python()), str(ROOT / "lib" / "daemon.py")],
         cwd=str(ROOT),
         env=env,
         stdout=log,
@@ -409,13 +295,44 @@ def stop_one(name: str, port: int) -> dict:
 
 
 
-def lp_fetch(
+def _prepare_observe_urls(url: str | list[str]) -> tuple[list[str] | None, dict | None]:
+    """Normalize and guard observe/fetch URLs."""
+    urls = [url] if isinstance(url, str) else list(url)
+    if not urls:
+        return None, {"ok": False, "product": "wick", "error": "no_url"}
+    cleaned_urls = [str(u).strip() for u in urls if u is not None]
+    if not cleaned_urls or any(not u for u in cleaned_urls):
+        return None, {"ok": False, "product": "wick", "error": "no_url"}
+    urls = cleaned_urls
+    if wick_origins is not None:
+        guarded: list[str] = []
+        for u in urls:
+            err = wick_origins.guard_fetch_url(u)
+            if err:
+                return None, err
+            if "://" not in u:
+                try:
+                    guarded.append(wick_origins.normalize_agent_url(u))
+                except ValueError as e:
+                    return None, {"ok": False, "product": "wick", "error": str(e)}
+            else:
+                guarded.append(u)
+        urls = guarded
+    if wick_capability is not None:
+        for u in urls:
+            herr = wick_capability.deny_host(u)
+            if herr:
+                return None, herr
+    return urls, None
+
+
+def chrome_fetch(
     url: str | list[str],
     dump: str = "markdown",
     max_chars: int = 12000,
     *,
     wait_until: str = "load",
-    wait_ms: int | None = None,  # default applied below
+    wait_ms: int | None = None,
     wait_selector: str | None = None,
     strip: list[str] | None = None,
     terminate_ms: int | None = None,
@@ -424,173 +341,94 @@ def lp_fetch(
     with_frames: bool = False,
     extra_args: list[str] | None = None,
 ) -> dict:
-    """Lightpanda native fetch — preferred agent path (no Chromium).
-
-    Headless model (from LP study):
-      - No GUI compositor; V8 + DOM only
-      - dump markdown/semantic_tree is LLM-cheap vs full HTML
-      - strip ui/css drops pixels CSS agents rarely need
-      - block-private-networks = basic SSRF guard for agent loops
-      - http-cache-dir cuts repeat-read cost on same host
-    """
-    urls = [url] if isinstance(url, str) else list(url)
-    if not urls:
-        return {"ok": False, "product": "wick", "error": "no_url"}
-    cleaned_urls = [str(u).strip() for u in urls if u is not None]
-    if not cleaned_urls or any(not u for u in cleaned_urls):
-        return {"ok": False, "product": "wick", "error": "no_url"}
-    urls = cleaned_urls
-    if wick_origins is not None:
-        guarded: list[str] = []
-        for u in urls:
-            err = wick_origins.guard_fetch_url(u)
-            if err:
-                return err
-            if "://" not in u:
-                try:
-                    guarded.append(wick_origins.normalize_agent_url(u))
-                except ValueError as e:
-                    return {"ok": False, "product": "wick", "error": str(e)}
-            else:
-                guarded.append(u)
-        urls = guarded
-    if wick_capability is not None:
-        for u in urls:
-            herr = wick_capability.deny_host(u)
-            if herr:
-                return herr
-
-    lp_bin = find_lightpanda()
-    if not lp_bin:
-        return {"ok": False, "product": "wick", "error": "lightpanda_not_found"}
-
-    ensure()
-    cmd: list[str] = [str(lp_bin), "fetch", *urls, "--json"]
-    if dump:
-        cmd.extend(["--dump", dump])
-    if wait_until and wait_until != "none":
-        cmd.extend(["--wait-until", wait_until])
-    # default wait_ms tighter for agents (LP default 5000)
-    wms = 2000 if wait_ms is None else wait_ms
-    cmd.extend(["--wait-ms", str(wms)])
-    if wait_selector:
-        cmd.extend(["--wait-selector", wait_selector])
-    if terminate_ms is not None:
-        cmd.extend(["--terminate-ms", str(terminate_ms)])
-    strips = strip if strip is not None else ["ui", "invisible"]
-    for s in strips:
-        if s and s != "none":
-            cmd.extend(["--strip-mode", s])
-    if block_private:
-        cmd.append("--block-private-networks")
-    # Wick Shields: EasyList/EasyPrivacy + tracker URL blocks + session cookies
-    if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
-        try:
-            wick_shields.append_lp_shield_args(
-                cmd,
-                shields=True,
-                session=os.environ.get("WICK_SESSION", "default"),
-                block_private=False,
-            )
-            if os.environ.get("WICK_PRIVACY_HEADERS", "1") != "0":
-                wick_shields.append_privacy_headers(cmd)
-            wick_shields.append_proxy(cmd)
-        except Exception:
-            pass
-    elif wick_shields is not None:
-        try:
-            load, jar = wick_shields.session_cookie_paths(os.environ.get("WICK_SESSION", "default"))
-            cmd.extend(["--cookie-jar", str(jar)])
-            if load.is_file() and load.stat().st_size > 2:
-                cmd.extend(["--cookie", str(load)])
-            wick_shields.append_proxy(cmd)
-        except Exception:
-            pass
-    elif wick_shields is not None:
-        pass
-    if use_cache:
-        cache = HOME / "http-cache"
-        cmd.extend(["--http-cache-dir", str(cache), "--http-cache-entry-limit", "2000"])
-    if with_frames:
-        cmd.append("--with-frames")
-    # identify as Wick agent (suffix ok; full UA cannot contain Mozilla)
-    cmd.extend(["--user-agent-suffix", f" Wick/{VERSION.split('.')[0]}.{VERSION.split('.')[1]}"])
-    if extra_args:
-        cmd.extend(extra_args)
-
-    t0 = time.time()
-    try:
-        out = subprocess.check_output(cmd, stderr=subprocess.PIPE, timeout=max(90, wms / 1000 + 60))
-    except subprocess.CalledProcessError as e:
+    """Headless Chromium observe — title, markdown/tree, role= hints."""
+    del wait_selector, strip, terminate_ms, block_private, use_cache, with_frames, extra_args
+    urls, err = _prepare_observe_urls(url)
+    if err:
+        return err
+    assert urls is not None
+    if not find_playwright_python():
         return {
             "ok": False,
             "product": "wick",
-            "error": "fetch_failed",
-            "stderr": (e.stderr or b"")[:400].decode(errors="replace"),
-            "cmd_tail": _redact_cmd_tail(cmd[:8]),
+            "error": "engine_unavailable",
+            "hint": "make install  # Playwright Chromium (wick install-engine)",
         }
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "product": "wick", "error": "fetch_timeout"}
-
-    try:
-        data = json.loads(out.decode())
-    except Exception:
-        return {"ok": False, "product": "wick", "error": "bad_json", "raw": out[:200].decode(errors="replace")}
-
-    ms = int((time.time() - t0) * 1000)
-
-    def pack_one(item: dict) -> dict:
-        content = item.get("content")
-        if isinstance(content, (dict, list)):
-            text = json.dumps(content, ensure_ascii=False)
-            content_obj = content
-        else:
-            text = str(content or "")
-            content_obj = None
-        status = item.get("http_status")
+    if not chrome_up():
+        st = start_chrome(False)
+        if not st.get("ok"):
+            st.setdefault(
+                "hint",
+                "make install  # Playwright Chromium",
+            )
+            return st
+    wms = 2000 if wait_ms is None else int(wait_ms)
+    env = os.environ.copy()
+    env["WICK_CHROME_PORT"] = str(CHROME_PORT)
+    env["WICK_HOME"] = str(HOME)
+    results: list[dict] = []
+    t0 = time.time()
+    script = ROOT / "lib" / "chrome_observe.py"
+    for u in urls:
         try:
-            status_i = int(status) if status is not None else None
-        except Exception:
-            status_i = None
-        http_ok = status_i is not None and 200 <= status_i < 400
-        truncated = len(text) > max_chars
-        body = {
-            "ok": True,  # transport/parse succeeded
-            "product": "wick",
-            "engine": "lightpanda",
-            "url": item.get("url") or (urls[0] if len(urls) == 1 else None),
-            "http_status": status_i if status_i is not None else status,
-            "http_ok": http_ok,
-            "dump": dump,
-            "chars": len(text),
-            "content": text[:max_chars],
-            "truncated": truncated,
-            "ms": ms,
-            "wait_until": wait_until,
-            "wait_ms": wms,
-            "strip": strips,
-        }
-        if content_obj is not None and dump == "semantic_tree":
-            body["tree"] = content_obj
-        # empty body on hard error statuses is a smell for agents
-        if status_i and status_i >= 400 and len(text.strip()) == 0:
-            body["empty_error_body"] = True
-        return body
+            out = subprocess.check_output(
+                [
+                    str(pw_python()),
+                    str(script),
+                    u,
+                    dump or "markdown",
+                    str(max_chars),
+                    wait_until or "load",
+                    str(wms),
+                ],
+                env=env,
+                cwd=str(ROOT),
+                stderr=subprocess.PIPE,
+                timeout=max(90, wms / 1000 + 60),
+            )
+            item = json.loads(out.decode())
+        except subprocess.CalledProcessError as e:
+            item = {
+                "ok": False,
+                "product": "wick",
+                "engine": "chromium",
+                "error": "fetch_failed",
+                "stderr": (e.stderr or b"")[:400].decode(errors="replace"),
+            }
+        except subprocess.TimeoutExpired:
+            item = {"ok": False, "product": "wick", "engine": "chromium", "error": "fetch_timeout"}
+        except Exception as e:
+            item = {
+                "ok": False,
+                "product": "wick",
+                "engine": "chromium",
+                "error": "bad_json" if isinstance(e, json.JSONDecodeError) else str(e)[:200],
+            }
+        results.append(item)
+    ms = int((time.time() - t0) * 1000)
+    if len(results) == 1:
+        one = results[0]
+        one.setdefault("ms", ms)
+        return one
+    return {
+        "ok": all(r.get("ok") for r in results),
+        "product": "wick",
+        "engine": "chromium",
+        "batch": True,
+        "count": len(results),
+        "results": results,
+        "ms": ms,
+    }
 
-    if isinstance(data, dict) and "results" in data:
-        results = [pack_one(x) for x in data.get("results") or []]
-        return {
-            "ok": all(r.get("ok") for r in results),
-            "product": "wick",
-            "engine": "lightpanda",
-            "batch": True,
-            "count": len(results),
-            "results": results,
-            "ms": ms,
-        }
-    if isinstance(data, dict):
-        return pack_one(data)
-    return {"ok": False, "product": "wick", "error": "unexpected_shape"}
+
+def observe_fetch(
+    url: str | list[str],
+    dump: str = "markdown",
+    max_chars: int = 12000,
+    **kw,
+) -> dict:
+    """Agent observe via headless Chromium (snap/plan/ask/open/fetch)."""
+    return chrome_fetch(url, dump=dump, max_chars=max_chars, **kw)
 
 
 def run_pw(script: str, *extra: str) -> int:
@@ -602,11 +440,10 @@ def run_pw(script: str, *extra: str) -> int:
     env = os.environ.copy()
     env["WICK_CHROME_PORT"] = str(CHROME_PORT)
     env["WICK_HOME"] = str(HOME)
-    return subprocess.call([str(VENV_PY), str(ROOT / "lib" / script), *extra], env=env, cwd=str(ROOT))
+    return subprocess.call([str(pw_python()), str(ROOT / "lib" / script), *extra], env=env, cwd=str(ROOT))
 
 
 def cmd_version(_: argparse.Namespace) -> int:
-    lp_bin = find_lightpanda()
     print(f"wick {VERSION}")
     print(
         json.dumps(
@@ -614,15 +451,11 @@ def cmd_version(_: argparse.Namespace) -> int:
                 "product": "wick",
                 "version": VERSION,
                 "home": str(HOME),
-                "engine_default": resolve_engine(None),
-                "lightpanda": {
-                    "bin": str(lp_bin) if lp_bin else None,
-                    "up": lp_up(),
-                    "cdp": f"http://127.0.0.1:{LP_PORT}",
-                },
+                "engine": "chromium",
                 "chromium": {
                     "up": chrome_up(),
                     "cdp": f"http://127.0.0.1:{CHROME_PORT}",
+                    "playwright": str(find_playwright_python()) if find_playwright_python() else None,
                 },
             },
             indent=2,
@@ -633,8 +466,6 @@ def cmd_version(_: argparse.Namespace) -> int:
 
 def cmd_doctor(_: argparse.Namespace) -> int:
     ensure()
-    lp_bin = find_lightpanda()
-    sym = lightpanda_symlink_info()
     try:
         home_mode = oct(HOME.stat().st_mode & 0o777)
     except OSError:
@@ -644,102 +475,50 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     print(f"home: {HOME} mode={home_mode}")
     print(f"disk: {disk_usage(HOME)}")
     print(f"root: {ROOT}")
-    print(f"lightpanda: {lp_bin}")
-    print(
-        "lightpanda_symlink: "
-        f"path={sym.get('path')} is_symlink={sym.get('is_symlink')} "
-        f"target={sym.get('target')} resolves={sym.get('resolves')}"
-    )
     print(f"venv: {VENV_PY.exists()}")
-    print(f"lp_cdp:{LP_PORT} up={lp_up()}")
+    print(f"playwright: {find_playwright_python()}")
     print(f"chrome_cdp:{CHROME_PORT} up={chrome_up()}")
-    print(f"default_engine: {resolve_engine(None)}")
-    print("license_layer: MIT (orchestration layer) · optional Lightpanda binary is AGPL third-party")
+    print("engine: chromium")
+    print(f"observe: {'chromium' if find_playwright_python() else 'unavailable'}")
+    print("license_layer: MIT (orchestration) · Chromium via Playwright")
     print("paid: no")
     return 0
 
 
 def cmd_ensure(_: argparse.Namespace) -> int:
-    """Start Lightpanda if binary exists; no-op if already up. Never starts Chromium."""
+    """Start the Chromium daemon if Playwright is installed."""
     ensure()
-    lp_bin = find_lightpanda()
-    if not lp_bin:
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "product": "wick",
-                    "action": "noop",
-                    "lightpanda": "absent",
-                    "chromium": "not_started",
-                    "hint": "wick install-engine to enable light engine",
-                }
-            )
-        )
-        return 0
-    if lp_up():
-        v = cdp_version(LP_PORT) or {}
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "product": "wick",
-                    "action": "noop",
-                    "lightpanda": "up",
-                    "cdp": f"http://127.0.0.1:{LP_PORT}",
-                    "browser": v.get("Browser"),
-                    "chromium": "not_started",
-                }
-            )
-        )
-        return 0
-    r = start_lp()
+    r = start_chrome(False)
     r["action"] = "started" if r.get("ok") and not r.get("already") else ("noop" if r.get("already") else "failed")
-    r["chromium"] = "not_started"
     print(json.dumps(r))
     return 0 if r.get("ok") else 1
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    eng = resolve_engine(args.engine)
-    if eng == "both":
-        print(json.dumps({"product": "wick", "lightpanda": start_lp(), "chromium": start_chrome(args.xvfb)}))
-        return 0
-    r = start_lp() if eng == "lightpanda" else start_chrome(args.xvfb)
+    r = start_chrome(getattr(args, "xvfb", False))
     print(json.dumps(r))
     return 0 if r.get("ok") else 1
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
-    eng = args.engine or "all"
-    out = []
-    if eng in ("all", "lightpanda"):
-        out.append(stop_one("lightpanda", LP_PORT))
-    if eng in ("all", "chromium"):
-        out.append(stop_one("chromium", CHROME_PORT))
-    print(json.dumps(out if len(out) > 1 else out[0]))
+    r = stop_one("chromium", CHROME_PORT)
+    print(json.dumps(r))
     return 0
 
 
 def cmd_status(_: argparse.Namespace) -> int:
-    lp_bin = find_lightpanda()
     print(
         json.dumps(
             {
                 "product": "wick",
                 "version": VERSION,
                 "free": True,
-                "engine_default": resolve_engine(None),
-                "lightpanda": {
-                    "up": lp_up(),
-                    "cdp": f"http://127.0.0.1:{LP_PORT}",
-                    "bin": str(lp_bin) if lp_bin else None,
-                    "pid": read_pid("lightpanda"),
-                },
+                "engine": "chromium",
                 "chromium": {
                     "up": chrome_up(),
                     "cdp": f"http://127.0.0.1:{CHROME_PORT}",
                     "pid": read_pid("chromium"),
+                    "playwright": str(find_playwright_python()) if find_playwright_python() else None,
                 },
                 "profile": wick_capability.current_profile() if wick_capability else "full-act",
                 "allow_hosts": wick_capability.parse_allow_hosts() if wick_capability else [],
@@ -752,7 +531,7 @@ def cmd_status(_: argparse.Namespace) -> int:
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
-    r = lp_fetch(
+    r = observe_fetch(
         args.url,
         dump=args.dump,
         max_chars=args.max,
@@ -773,54 +552,31 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
 
 def cmd_open(args: argparse.Namespace) -> int:
-    lp_bin = find_lightpanda()
-    if lp_bin:
-        _kw = dict(
-            dump=args.dump,
-            max_chars=args.max,
-            wait_until=getattr(args, "wait_until", "load") or "load",
-            wait_ms=getattr(args, "wait_ms", 1500),
-            wait_selector=getattr(args, "wait_selector", None),
-            strip=[] if getattr(args, "no_strip", False) else _observe_strip(no_strip=False),
-        )
-        if getattr(args, "fast", False):
-            _kw["wait_until"] = "domcontentloaded"
-            _kw["wait_ms"] = min(int(_kw["wait_ms"] or 1500), 1200)
-        r = lp_fetch(args.url, **_kw)
-        if r.get("ok") and getattr(args, "stats", False) and wick_stats is not None:
-            def _build(cmd):
-                if wick_shields is not None and os.environ.get("WICK_SHIELDS", "1") != "0":
-                    wick_shields.append_lp_shield_args(
-                        cmd, shields=True,
-                        session=os.environ.get("WICK_SESSION", "default"),
-                        block_private=False,
-                    )
-                    wick_shields.append_privacy_headers(cmd)
-            try:
-                lp_bin = find_lightpanda()
-                r["stats"] = wick_stats.metrics_pass(
-                    lp_bin, args.url,
-                    build_shield_cmd=_build,
-                    wait_ms=int(_kw["wait_ms"] or 1500),
-                    wait_until=_kw["wait_until"] or "load",
-                )
-            except Exception as e:
-                r["stats_error"] = str(e)[:160]
-        if r.get("ok") and getattr(args, "save_session", False) and wick_shields is not None:
-            try:
-                r["session_saved"] = wick_shields.promote_jar_to_load(
-                    os.environ.get("WICK_SESSION", "default")
-                )
-            except Exception as e:
-                r["session_saved"] = {"ok": False, "error": str(e)[:120]}
-    else:
-        if run_pw("action_goto.py", args.url) != 0:
-            return 1
-        env = os.environ.copy()
-        env["WICK_CHROME_PORT"] = str(CHROME_PORT)
-        out = subprocess.check_output([str(VENV_PY), str(ROOT / "lib" / "action_text.py"), str(args.max)], env=env)
-        r = json.loads(out.decode())
-        r["engine"] = "chromium"
+    _kw = dict(
+        dump=args.dump,
+        max_chars=args.max,
+        wait_until=getattr(args, "wait_until", "load") or "load",
+        wait_ms=getattr(args, "wait_ms", 1500),
+        wait_selector=getattr(args, "wait_selector", None),
+        strip=[] if getattr(args, "no_strip", False) else _observe_strip(no_strip=False),
+    )
+    if getattr(args, "fast", False):
+        _kw["wait_until"] = "domcontentloaded"
+        _kw["wait_ms"] = min(int(_kw["wait_ms"] or 1500), 1200)
+    r = observe_fetch(args.url, **_kw)
+    if r.get("ok") and getattr(args, "stats", False):
+        r["stats"] = {
+            "ok": False,
+            "error": "stats_unavailable",
+            "hint": "Request counters are not available on Chromium. Use wick shields --policy.",
+        }
+    if r.get("ok") and getattr(args, "save_session", False) and wick_shields is not None:
+        try:
+            r["session_saved"] = wick_shields.promote_jar_to_load(
+                os.environ.get("WICK_SESSION", "default")
+            )
+        except Exception as e:
+            r["session_saved"] = {"ok": False, "error": str(e)[:120]}
     r["product"] = "wick"
     if not r.get("ok") and "error" in r:
         print(json.dumps(r, ensure_ascii=False))
@@ -831,8 +587,8 @@ def cmd_open(args: argparse.Namespace) -> int:
             shot = args.out or str(SHOTS / f"wick-{int(time.time())}.png")
             env = os.environ.copy()
             env["WICK_CHROME_PORT"] = str(CHROME_PORT)
-            subprocess.call([str(VENV_PY), str(ROOT / "lib" / "action_goto.py"), args.url], env=env)
-            subprocess.call([str(VENV_PY), str(ROOT / "lib" / "action_shot.py"), shot, "viewport"], env=env)
+            subprocess.call([str(pw_python()), str(ROOT / "lib" / "action_goto.py"), args.url], env=env)
+            subprocess.call([str(pw_python()), str(ROOT / "lib" / "action_shot.py"), shot, "viewport"], env=env)
             r["shot"] = shot
         else:
             r["shot_error"] = st
@@ -853,7 +609,7 @@ def cmd_open(args: argparse.Namespace) -> int:
 
 
 def cmd_links(args: argparse.Namespace) -> int:
-    r = lp_fetch(args.url, dump="markdown", max_chars=args.max)
+    r = observe_fetch(args.url, dump="markdown", max_chars=args.max)
     if not r.get("ok"):
         r["product"] = "wick"
         print(json.dumps(r, ensure_ascii=False))
@@ -877,7 +633,7 @@ def cmd_links(args: argparse.Namespace) -> int:
 def cmd_tree(args: argparse.Namespace) -> int:
     """Accessibility-ish semantic tree — cheaper than screenshots for agents."""
     dump = "semantic_tree_text" if not args.json_tree else "semantic_tree"
-    r = lp_fetch(
+    r = observe_fetch(
         args.url,
         dump=dump,
         max_chars=args.max,
@@ -891,7 +647,7 @@ def cmd_tree(args: argparse.Namespace) -> int:
 
 
 def cmd_batch(args: argparse.Namespace) -> int:
-    r = lp_fetch(
+    r = observe_fetch(
         args.urls,
         dump=args.dump,
         max_chars=args.max,
@@ -904,21 +660,25 @@ def cmd_batch(args: argparse.Namespace) -> int:
 
 def cmd_metrics(_: argparse.Namespace) -> int:
     ensure()
-    # prefer serve metrics; else one-shot fetch --metrics is noisy
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{LP_PORT}/metrics", timeout=2) as resp:
-            text = resp.read().decode()
-        print(json.dumps({"ok": True, "product": "wick", "source": "cdp_serve", "metrics": text[:8000]}))
-        return 0
-    except Exception as e:
-        print(json.dumps({"ok": False, "product": "wick", "error": "metrics_unavailable", "detail": str(e), "hint": "wick ensure"}))
-        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "product": "wick",
+                "engine": "chromium",
+                "cdp": f"http://127.0.0.1:{CHROME_PORT}",
+                "up": chrome_up(),
+                "playwright": str(find_playwright_python()) if find_playwright_python() else None,
+            }
+        )
+    )
+    return 0
 
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
     """Cross-exam style compact brief for agents (status + title + links + excerpt)."""
-    r = lp_fetch(
+    r = observe_fetch(
         args.url,
         dump="markdown",
         max_chars=max(args.max, 12000),
@@ -959,12 +719,12 @@ def cmd_probe(args: argparse.Namespace) -> int:
         "link_count": len(links),
         "links_sample": links[: min(10, args.link_sample)],
         "excerpt": excerpt,
-        "engine": "lightpanda",
+        "engine": r.get("engine") or "chromium",
         "dump": "markdown",
     }
     # optional tree skim when --tree
     if args.tree:
-        tr = lp_fetch(
+        tr = observe_fetch(
             args.url,
             dump="semantic_tree_text",
             max_chars=args.tree_max,
@@ -988,66 +748,6 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_xexam(args: argparse.Namespace) -> int:
-    """Run raw Lightpanda vs Wick on one URL and report deltas (experience harness)."""
-    lp_bin = find_lightpanda()
-    if not lp_bin:
-        print(json.dumps({"ok": False, "error": "lightpanda_not_found"}))
-        return 1
-    url = args.url
-    # raw LP
-    t0 = time.time()
-    try:
-        raw = subprocess.check_output(
-            [str(lp_bin), "fetch", url, "--dump", "markdown", "--json", "--wait-ms", str(args.wait_ms), "--wait-until", args.wait_until],
-            stderr=subprocess.DEVNULL,
-            timeout=90,
-        )
-        lp = json.loads(raw.decode())
-        lp_ms = int((time.time() - t0) * 1000)
-        lp_chars = len(str(lp.get("content") or ""))
-        lp_st = lp.get("http_status")
-    except Exception as e:
-        lp_ms = -1
-        lp_chars = 0
-        lp_st = None
-        lp = {"error": str(e)[:200]}
-    w = lp_fetch(url, dump="markdown", max_chars=200000, wait_until=args.wait_until, wait_ms=args.wait_ms)
-    tr = lp_fetch(url, dump="semantic_tree_text", max_chars=200000, wait_until=args.wait_until, wait_ms=args.wait_ms)
-    report = {
-        "ok": True,
-        "product": "wick",
-        "url": url,
-        "lightpanda_raw": {"http_status": lp_st, "ms_wall": lp_ms, "chars": lp_chars},
-        "wick_fetch": {
-            "http_status": w.get("http_status"),
-            "http_ok": w.get("http_ok"),
-            "ms": w.get("ms"),
-            "chars": w.get("chars"),
-            "strip": w.get("strip"),
-        },
-        "wick_tree": {
-            "ms": tr.get("ms"),
-            "chars": tr.get("chars"),
-            "http_ok": tr.get("http_ok"),
-        },
-        "delta_ms_wick_minus_raw": (w.get("ms") or 0) - (lp_ms or 0),
-        "smaller_dump": "tree" if (tr.get("chars") or 0) < (w.get("chars") or 0) else "markdown",
-        "notes": [],
-    }
-    if w.get("chars") == lp_chars:
-        report["notes"].append("strip_default_did_not_change_markdown_size")
-    if (tr.get("chars") or 0) > (w.get("chars") or 0) * 1.5:
-        report["notes"].append("tree_much_larger_than_markdown_prefer_md")
-    if not w.get("http_ok"):
-        report["notes"].append("non_2xx_http")
-    if (w.get("ms") or 0) + 50 < (lp_ms or 0):
-        report["notes"].append("wick_faster_likely_http_cache")
-    print(json.dumps(report, ensure_ascii=False))
-    return 0
-
-
-
 def cmd_shields(args: argparse.Namespace) -> int:
     """Brave-inspired shields status / toggle info."""
     ensure()
@@ -1058,9 +758,10 @@ def cmd_shields(args: argparse.Namespace) -> int:
         "shields_env": os.environ.get("WICK_SHIELDS", "1"),
         "session": os.environ.get("WICK_SESSION", "default"),
         "honest_scope": [
-            "network ad/tracker blocking via EasyList+EasyPrivacy+Wick patterns",
-            "private network SSRF block",
-            "per-session cookie jars",
+            "EasyList/EasyPrivacy/Fanboy files can be downloaded; Chromium does not parse ABP lists",
+            "Chromium aborts private/metadata requests plus a small built-in tracker URL list (and wick-block-urls.txt)",
+            "private-network SSRF block, privacy headers, session isolation",
+            "per-session cookie jars + Chromium profiles",
             "NOT full Brave canvas/WebGL fingerprint farbling (engine limit)",
             "Chromium path: automation hardening flags only — not Camoufox-class stealth",
             "WebRTC LAN IP guard + Client Hint reduction (privacy, not stealth)",
@@ -1245,7 +946,7 @@ def cmd_act(args: argparse.Namespace) -> int:
         return 1
     env = os.environ.copy()
     env["WICK_CHROME_PORT"] = str(CHROME_PORT)
-    cmd = [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), args.action, *resolved]
+    cmd = [str(pw_python()), str(ROOT / "lib" / "chrome_actions.py"), args.action, *resolved]
     if vmeta and vmeta.get("vault_resolved"):
         # Capture JSON so we can attach vault meta without leaking the secret.
         proc = subprocess.run(cmd, env=env, cwd=str(ROOT), capture_output=True, text=True)
@@ -1473,28 +1174,56 @@ def cmd_run(args: argparse.Namespace) -> int:
         if act in ("open", "fetch", "probe", "tree", "links", "snap", "elements"):
             url = step.get("url")
             if act == "open":
-                r = lp_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 8000))
+                r = observe_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 8000))
             elif act == "fetch":
-                r = lp_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 12000))
+                r = observe_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 12000))
             elif act == "tree":
-                r = lp_fetch(url, dump="semantic_tree_text", max_chars=int(step.get("max") or 40000))
+                r = observe_fetch(url, dump="semantic_tree_text", max_chars=int(step.get("max") or 40000))
             elif act == "probe":
-                # minimal
-                r = lp_fetch(url, dump="markdown", max_chars=12000)
+                r = observe_fetch(url, dump="markdown", max_chars=12000)
                 if r.get("ok"):
                     md = r.get("content") or ""
                     r = {
                         "ok": True,
                         "url": url,
                         "http_ok": r.get("http_ok"),
+                        "engine": r.get("engine"),
                         "chars": r.get("chars"),
                         "link_count": len(extract_md_links(md)),
                         "excerpt": md[:400],
                     }
             elif act == "links":
-                r = lp_fetch(url, dump="markdown", max_chars=100000)
+                r = observe_fetch(url, dump="markdown", max_chars=100000)
                 if r.get("ok"):
-                    r = {"ok": True, "url": url, "links": extract_md_links(r.get("content") or "")}
+                    r = {
+                        "ok": True,
+                        "url": url,
+                        "engine": r.get("engine"),
+                        "links": extract_md_links(r.get("content") or ""),
+                    }
+            elif act == "snap":
+                r = snap_payload(
+                    url or "",
+                    max_chars=int(step.get("max") or 12000),
+                    fast=bool(step.get("fast", True)),
+                    profile=step.get("profile"),
+                )
+            elif act == "elements":
+                r = observe_fetch(
+                    url,
+                    dump="semantic_tree_text",
+                    max_chars=int(step.get("max") or 80000),
+                )
+                if r.get("ok") and wick_elements is not None:
+                    all_e = wick_elements.parse_tree_text(r.get("content") or "")
+                    hit = wick_elements.interactive_only(all_e, limit=int(step.get("limit") or 40))
+                    r = {
+                        "ok": True,
+                        "url": r.get("url") or url,
+                        "engine": r.get("engine"),
+                        "count": len(hit),
+                        "elements": hit,
+                    }
             results.append({"i": i, "action": act, "result": r})
         elif act in (
             "goto", "click", "click_xy", "click_n",
@@ -1610,7 +1339,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 elif act == "content":
                     rest = [str(step.get("max") or 8000)]
                 out = subprocess.check_output(
-                    [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), chrome_act, *rest],
+                    [str(pw_python()), str(ROOT / "lib" / "chrome_actions.py"), chrome_act, *rest],
                     env=env,
                     stderr=subprocess.STDOUT,
                 )
@@ -1635,65 +1364,34 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_shields_bench(args: argparse.Namespace) -> int:
-    """Cold-ish A/B: request counts with shields on vs off (next concrete security proof)."""
-    lp_bin = find_lightpanda()
-    if not lp_bin or wick_stats is None:
-        print(json.dumps({"ok": False, "error": "need lightpanda + stats_fetch"}))
-        return 1
-    url = args.url
-    wait_ms = args.wait_ms
-
-    def build_on(cmd):
-        if wick_shields:
-            wick_shields.append_lp_shield_args(cmd, shields=True, session="bench", block_private=True)
-            wick_shields.append_privacy_headers(cmd)
-            wick_shields.append_proxy(cmd)
-
-    def build_off(cmd):
-        # still SSRF block + proxy; no adblock lists
-        cmd.append("--block-private-networks")
-        if wick_shields:
-            wick_shields.append_proxy(cmd)
-
-    # OFF first (no list overhead), clear HTTP cache between for fairer A/B
-    cache = HOME / "http-cache"
-    try:
-        if cache.exists():
-            for child in cache.iterdir():
-                if child.is_file():
-                    child.unlink()
-                else:
-                    shutil.rmtree(child, ignore_errors=True)
-    except Exception:
-        pass
-    off = wick_stats.metrics_pass(lp_bin, url, build_shield_cmd=build_off, wait_ms=wait_ms)
-    try:
-        if cache.exists():
-            for child in cache.iterdir():
-                if child.is_file():
-                    child.unlink()
-                else:
-                    shutil.rmtree(child, ignore_errors=True)
-    except Exception:
-        pass
-    on = wick_stats.metrics_pass(lp_bin, url, build_shield_cmd=build_on, wait_ms=wait_ms)
-    a, b = on.get("http_requests_async") or 0, off.get("http_requests_async") or 0
-    saved = (b - a) if (a is not None and b is not None) else None
-    print(json.dumps({
-        "ok": True,
-        "product": "wick",
-        "url": url,
-        "shields_on": on,
-        "shields_off": off,
-        "async_requests_saved": saved,
-        "note": "Second pass may warm caches; run twice or unique URL for colder read.",
-    }, indent=2))
-    return 0
+    """Honest: request-count A/B is not implemented on Chromium."""
+    print(
+        json.dumps(
+            {
+                "ok": False,
+                "product": "wick",
+                "error": "shields_bench_unavailable",
+                "url": getattr(args, "url", None),
+                "hint": "Use wick shields --policy. Request-count A/B is not available on Chromium.",
+            }
+        )
+    )
+    return 1
 
 
 def cmd_get(args: argparse.Namespace) -> int:
     """Download a URL to session downloads (regular-browser file get)."""
     url = args.url
+    if wick_origins is not None:
+        err = wick_origins.guard_fetch_url(url)
+        if err:
+            print(json.dumps(err))
+            return 1
+    if wick_capability is not None:
+        herr = wick_capability.deny_host(url)
+        if herr:
+            print(json.dumps(herr))
+            return 1
     sess = os.environ.get("WICK_SESSION", "default")
     if wick_shields:
         out_dir = wick_shields.session_downloads(sess)
@@ -1701,6 +1399,26 @@ def cmd_get(args: argparse.Namespace) -> int:
         out_dir = HOME / "downloads"
         out_dir.mkdir(parents=True, exist_ok=True)
     dest = Path(args.out) if args.out else None
+    try:
+        import request_guard as wick_rg
+
+        if dest is not None:
+            confined = wick_rg.confine_agent_file(dest)
+            if confined is None:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "path_not_confined",
+                            "path": str(dest)[:200],
+                            "hint": "Write under WICK_HOME or set WICK_ALLOW_UNCONFINED_FILES=1",
+                        }
+                    )
+                )
+                return 1
+            dest = confined
+    except Exception:
+        pass
     # Prefer Chromium for auth-heavy; curl for simple with optional proxy
     if args.browser:
         if not chrome_up():
@@ -1711,12 +1429,27 @@ def cmd_get(args: argparse.Namespace) -> int:
         env = os.environ.copy()
         env["WICK_CHROME_PORT"] = str(CHROME_PORT)
         env["WICK_DOWNLOADS"] = str(out_dir)
-        cmd = [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), "download", url, str(out_dir)]
+        cmd = [str(pw_python()), str(ROOT / "lib" / "chrome_actions.py"), "download", url, str(out_dir)]
         return subprocess.call(cmd, env=env)
     # curl path
     name = url.rstrip("/").split("/")[-1].split("?")[0] or "download.bin"
     dest = dest or (out_dir / name)
-    cmd = ["curl", "-fsSL", "-L", "--max-time", "120", "-A", f"Wick/{VERSION}", "-o", str(dest), url]
+    cmd = [
+        "curl",
+        "-fsSL",
+        "-L",
+        "--max-redirs",
+        "8",
+        "--proto",
+        "=https,http",
+        "--max-time",
+        "120",
+        "-A",
+        f"Wick/{VERSION}",
+        "-o",
+        str(dest),
+        url,
+    ]
     proxy = None
     if wick_shields:
         proxy = wick_shields.resolve_proxy()
@@ -1755,7 +1488,7 @@ def cmd_pdf(args: argparse.Namespace) -> int:
         env = os.environ.copy()
         env["WICK_CHROME_PORT"] = str(CHROME_PORT)
         subprocess.check_call(
-            [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), "goto", args.url],
+            [str(pw_python()), str(ROOT / "lib" / "chrome_actions.py"), "goto", args.url],
             env=env,
         )
     elif not chrome_up():
@@ -1771,7 +1504,7 @@ def cmd_pdf(args: argparse.Namespace) -> int:
     env = os.environ.copy()
     env["WICK_CHROME_PORT"] = str(CHROME_PORT)
     out_b = subprocess.check_output(
-        [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), "pdf", out],
+        [str(pw_python()), str(ROOT / "lib" / "chrome_actions.py"), "pdf", out],
         env=env,
     )
     r = json.loads(out_b.decode())
@@ -1807,7 +1540,7 @@ def cmd_tabs(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": f"unknown {act}"}))
         return 2
     out = subprocess.check_output(
-        [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), chrome_act, *rest],
+        [str(pw_python()), str(ROOT / "lib" / "chrome_actions.py"), chrome_act, *rest],
         env=env,
     )
     print(out.decode().strip())
@@ -1943,10 +1676,10 @@ def _gather_snap(
     fetch_kw = dict(wait_until=wu, wait_ms=wait, strip=strips)
 
     def _tree():
-        return lp_fetch(url, dump="semantic_tree_text", max_chars=tree_cap, **fetch_kw)
+        return observe_fetch(url, dump="semantic_tree_text", max_chars=tree_cap, **fetch_kw)
 
     def _md():
-        return lp_fetch(url, dump="markdown", max_chars=md_max or 4000, **fetch_kw)
+        return observe_fetch(url, dump="markdown", max_chars=md_max or 4000, **fetch_kw)
 
     if skip_markdown:
         tree_r = _tree()
@@ -1998,6 +1731,7 @@ def _gather_snap(
                 "elements": elements,
                 "element_count": len(elements),
                 "tree_chars": tree_r.get("chars"),
+                "engine": tree_r.get("engine"),
                 "fast": bool(fast),
                 "strip": strips,
                 "tree_only": True,
@@ -2043,6 +1777,7 @@ def _gather_snap(
         "elements": elements,
         "element_count": len(elements),
         "tree_chars": tree_r.get("chars"),
+        "engine": tree_r.get("engine") or md.get("engine"),
         "fast": bool(fast),
         "strip": strips,
         "profile": prof,
@@ -2243,6 +1978,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "excerpt": snap.get("excerpt"),
         "element_count": snap.get("element_count"),
         "link_count": snap.get("link_count"),
+        "engine": snap.get("engine"),
         "ms": snap.get("ms"),
         "suggestions": suggestions,
         "hint": "Suggestions are goal-agnostic; pick actions matching your task.",
@@ -2297,6 +2033,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "title": snap.get("title"),
         "query": args.q,
         "query_words": words,
+        "engine": snap.get("engine"),
         "ms": snap.get("ms"),
         "excerpt_match": excerpt_score > 0,
         "excerpt_score": excerpt_score,
@@ -2318,7 +2055,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 def cmd_elements(args: argparse.Namespace) -> int:
     """List interactive elements from semantic tree (agent click targets)."""
-    r = lp_fetch(
+    r = observe_fetch(
         args.url,
         dump="semantic_tree_text",
         max_chars=args.max,
@@ -2462,7 +2199,7 @@ def _rpc_handlers() -> dict:
       strips = _observe_strip(no_strip=bool(args.get("no_strip")))
       wu = "domcontentloaded" if args.get("fast") else (args.get("wait_until") or "load")
       wms = 1200 if args.get("fast") else int(args.get("wait_ms") or 1500)
-      r = lp_fetch(
+      r = observe_fetch(
           args["url"],
           dump=args.get("dump") or "markdown",
           max_chars=int(args.get("max") or 8000),
@@ -2477,7 +2214,7 @@ def _rpc_handlers() -> dict:
       return _annotate_observe(r)
 
   def _elements(args: dict) -> dict:
-      r = lp_fetch(
+      r = observe_fetch(
           args["url"],
           dump="semantic_tree_text",
           max_chars=int(args.get("max") or 80000),
@@ -2527,7 +2264,7 @@ def _rpc_handlers() -> dict:
       env = os.environ.copy()
       env["WICK_CHROME_PORT"] = str(CHROME_PORT)
       proc = subprocess.run(
-          [str(VENV_PY), str(ROOT / "lib" / "chrome_actions.py"), str(action), *rest],
+          [str(pw_python()), str(ROOT / "lib" / "chrome_actions.py"), str(action), *rest],
           env=env,
           cwd=str(ROOT),
           capture_output=True,
@@ -2658,8 +2395,7 @@ def _rpc_handlers() -> dict:
           "ok": True,
           "product": "wick",
           "version": VERSION,
-          "lightpanda": bool(find_lightpanda()),
-          "lightpanda_up": lp_up(),
+          "engine": "chromium",
           "chrome_up": chrome_up(),
       }
 
@@ -2729,7 +2465,7 @@ def cmd_shot(a: argparse.Namespace) -> int:
 def cmd_text(a: argparse.Namespace) -> int:
     if a.live or not a.url:
         return run_pw("action_text.py", str(a.max))
-    r = lp_fetch(a.url, "markdown", a.max)
+    r = observe_fetch(a.url, dump="markdown", max_chars=a.max)
     r["product"] = "wick"
     print(json.dumps(r, ensure_ascii=False))
     return 0 if r.get("ok") else 1
@@ -2774,30 +2510,32 @@ def cmd_prune(_: argparse.Namespace) -> int:
 
 
 def cmd_install_engine(_: argparse.Namespace) -> int:
-    """Download free Lightpanda nightly into engines/ (optional backend)."""
+    """Install Playwright Chromium into the project venv."""
     ensure()
-    dest = ENGINES / "lightpanda"
-    url = "https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux"
-    print(json.dumps({"ok": True, "product": "wick", "downloading": url, "dest": str(dest)}))
+    py = VENV_PY if VENV_PY.is_file() else Path(sys.executable)
+    pip = py.parent / "pip"
+    if not pip.is_file():
+        pip = Path(sys.executable)
+        pip_cmd = [str(pip), "-m", "pip"]
+    else:
+        pip_cmd = [str(pip)]
     try:
-        subprocess.check_call(["curl", "-fsSL", "-o", str(dest), url])
-        dest.chmod(0o755)
-        link = ROOT / "bin" / "lightpanda"
-        if not link.exists():
-            link.symlink_to(dest)
+        subprocess.check_call([*pip_cmd, "install", "-q", "playwright"])
+        subprocess.check_call([str(py), "-m", "playwright", "install", "chromium"])
         print(
             json.dumps(
                 {
                     "ok": True,
                     "product": "wick",
-                    "path": str(dest),
-                    "version": subprocess.check_output([str(dest), "version"], text=True).strip(),
+                    "engine": "chromium",
+                    "python": str(py),
+                    "hint": "wick ensure  # start the Chromium daemon",
                 }
             )
         )
         return 0
     except Exception as e:
-        print(json.dumps({"ok": False, "product": "wick", "error": str(e)}))
+        print(json.dumps({"ok": False, "product": "wick", "error": str(e)[:240]}))
         return 1
 
 
@@ -2829,14 +2567,12 @@ def main() -> int:
 
     sub.add_parser("version", help="Print wick version and engine status")
     sub.add_parser("doctor")
-    sub.add_parser("ensure", help="Start Lightpanda if present; never starts Chromium")
+    sub.add_parser("ensure", help="Start the Chromium daemon")
 
     p = sub.add_parser("start")
-    p.add_argument("--engine", choices=["auto", "lightpanda", "chromium", "both"])
     p.add_argument("--xvfb", action="store_true")
 
     p = sub.add_parser("stop")
-    p.add_argument("--engine", choices=["lightpanda", "chromium", "all"], default="all")
 
     sub.add_parser("status")
 
@@ -2886,7 +2622,7 @@ def main() -> int:
     p.add_argument("--full-chrome", action="store_true", help="do not strip ui/css")
     _add_json_only(p)
 
-    p = sub.add_parser("batch", help="Fetch many URLs in one Lightpanda process")
+    p = sub.add_parser("batch", help="Fetch many URLs (bounded Chromium observe)")
     p.add_argument("urls", nargs="+")
     p.add_argument("--dump", default="markdown")
     p.add_argument("--max", type=int, default=8000)
@@ -2998,7 +2734,7 @@ def main() -> int:
     p.add_argument("script", help="path to JSON list of steps")
     _add_json_only(p)
 
-    p = sub.add_parser("metrics", help="Lightpanda Prometheus metrics from serve CDP")
+    p = sub.add_parser("metrics", help="Chromium daemon status")
     _add_json_only(p)
 
     p = sub.add_parser("snap", help="Agent one-shot snapshot: title, excerpt, links, elements")
@@ -3094,12 +2830,6 @@ def main() -> int:
     p.add_argument("--fail-http", action="store_true", help="exit 2 when http_ok is false")
     _add_json_only(p)
 
-    p = sub.add_parser("xexam", help="Cross-exam raw Lightpanda vs Wick on one URL")
-    p.add_argument("url")
-    p.add_argument("--wait-until", default="load")
-    p.add_argument("--wait-ms", type=int, default=2000)
-    _add_json_only(p)
-
     p = sub.add_parser("goto")
     p.add_argument("url")
 
@@ -3127,7 +2857,7 @@ def main() -> int:
     _add_json_only(p)
 
     sub.add_parser("prune")
-    sub.add_parser("install-engine", help="Download free Lightpanda nightly (optional backend)")
+    sub.add_parser("install-engine", help="Install Playwright Chromium")
 
     args = ap.parse_args()
     if wick_capability is not None:
@@ -3191,7 +2921,6 @@ def main() -> int:
         "mcp": cmd_mcp,
         "plan": cmd_plan,
         "ask": cmd_ask,
-        "xexam": cmd_xexam,
         "goto": cmd_goto,
         "shot": cmd_shot,
         "text": cmd_text,
