@@ -34,9 +34,19 @@ See [VAULT.md](VAULT.md) and [VAULT-CRYPTO.md](VAULT-CRYPTO.md). Combine with sh
 
 Passkeys: vault-stored resident keys, PKCS#8 wrapped with a dedicated AES-256-GCM filewrap key (`$WICK_HOME/vault/passkey.wrap`, `0600`) on top of wickvault2. Injected via Chromium's CDP virtual authenticator. Not Touch ID / hardware keys. `wick vault doctor` / `wick shields` report `hsm: false` unless `/dev/tpmrm0` or a real PKCS#11 token is present. `WICK_PASSKEY_REQUIRE_HSM=1` refuses create when no hardware. Private keys never appear in agent JSON. See [PASSKEYS.md](PASSKEYS.md).
 
-## Fetch / navigation guards (0.9)
+## Fetch / navigation guards (0.9+)
 
-Chromium observe (`fetch` / `snap`) and `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost). Override only with `WICK_ALLOW_PRIVATE=1`.
+Chromium observe (`fetch` / `snap`) and `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, `ftp:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost, `.internal` / metadata names). Override only with `WICK_ALLOW_PRIVATE=1`.
+
+After navigation, Wick checks the **landed** URL the same way. A public URL that 302s onto `169.254.169.254` or `127.0.0.1` is denied and the tab is parked on `about:blank` so the private body is not returned to the agent.
+
+`WICK_RESOLVE_CHECK=1` (default) also looks up A/AAAA records. If a hostname resolves to a private or metadata address, observe/goto fail with `resolved_private`. DNS errors are fail-open so a flaky resolver does not take the web offline. Set `WICK_RESOLVE_CHECK=0` to skip the lookup.
+
+Chromium request routes abort private/metadata/dangerous URLs and, when `WICK_SHIELDS=1`, a small built-in tracker substring list plus `~/.wick/shields/wick-block-urls.txt`. Host allowlists apply to **navigations**, not every CDN subresource.
+
+`javascript:` / `data:` / `file:` links are dropped from observe `links[]` so a planner cannot feed them straight into `act click`. Page text that matches common jailbreak phrases is flagged as `security.injection_probes` — reported, not stripped.
+
+Downloads, PDF, and screenshots must write under `WICK_HOME` (or `WICK_DOWNLOADS`). Escape attempts return `path_not_confined`. Set `WICK_ALLOW_UNCONFINED_FILES=1` only when a harness truly needs an absolute path.
 
 ## Loopback CDP
 
@@ -48,8 +58,9 @@ Do not WAN-bind these ports. Anyone who can reach CDP can drive the browser as y
 
 Wick provides **network-layer** privacy inspired by Brave:
 
-- EasyList / EasyPrivacy / Fanboy files can be downloaded (`wick shields --update`); Chromium does **not** apply them as request filters
-- Private-network / SSRF blocking on observe and Chromium goto
+- EasyList / EasyPrivacy / Fanboy files can be downloaded (`wick shields --update`); Chromium does **not** parse ABP lists
+- Chromium aborts private/metadata requests and a small built-in tracker URL list (`wick-block-urls.txt` when present)
+- Private-network / SSRF blocking on observe, Chromium goto, landed URLs, and DNS resolution
 - Optional DNT / Sec-GPC headers
 - Per-session cookie jars and Chromium profiles
 - `wick session export` redacts cookie values by default (`--reveal` is full-act only; redacted exports are not importable)

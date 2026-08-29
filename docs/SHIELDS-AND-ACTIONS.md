@@ -4,8 +4,8 @@
 
 | Brave | Wick 0.4 |
 |-------|----------|
-| EasyList / EasyPrivacy style blocking | **Download only** — lists in `~/.wick/shields/`; Chromium does not apply them as request filters |
-| Tracker URL blocks | **Download only** — `wick-block-urls.txt` is stored, not applied as Chromium route blocks |
+| EasyList / EasyPrivacy style blocking | **Download only** — Chromium does not parse ABP lists |
+| Tracker URL blocks | **Yes (small)** — built-in needles + `wick-block-urls.txt` aborted on Chromium routes |
 | Private / internal net block | **Yes** — SSRF default |
 | Fingerprint farbling (canvas/WebGL/audio) | **No** — needs engine-level patches (Brave/Camoufox). Wick states this in `wick shields` |
 | HTTPS / first-party isolation | Session cookie jars (`wick session`) — not full site-isolation browser |

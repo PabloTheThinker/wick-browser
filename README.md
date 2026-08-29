@@ -22,7 +22,7 @@ wick act  click 'role=link[name="More information"]'   # act: hints resolve dire
 | Agent-friendly page text | Markdown / semantic tree from headless Chromium |
 | Next-step planning | `plan` (goal-agnostic suggestions), `ask` (fuzzy target filter, no LLM) |
 | One engine | Chromium via Playwright — observe and act |
-| Tracker / ad lists | Downloadable via `wick shields --update` — not applied as Chromium request filters |
+| Tracker / ad lists | Chromium blocks a small built-in URL list + `wick-block-urls.txt`. EasyList files download but are not parsed |
 | Sessions | Isolated cookie jars + Chromium profiles |
 | Credentials | Origin-bound vault + `wick act login` (Chrome/Brave-style autofill; Proton Pass / KeePassXC refs) |
 | Automation | `act`, multi-tab, PDF, playbooks (`run`) |

@@ -77,6 +77,46 @@ def _guard_nav_url(url: str) -> tuple[str | None, dict | None]:
     return normalized, None
 
 
+def _guard_landed(page) -> dict | None:
+    """After navigation, refuse private/blocked landings and park on about:blank."""
+    if wick_origins is None:
+        return None
+    try:
+        url = page.url
+    except Exception:
+        return None
+    if wick_origins.is_parking_url(url):
+        return None
+    err = wick_origins.guard_fetch_url(url)
+    if err is None and wick_capability is not None:
+        err = wick_capability.deny_host(url)
+    if err is None:
+        return None
+    try:
+        page.goto("about:blank")
+    except Exception:
+        pass
+    out = dict(err)
+    out["landed"] = True
+    return out
+
+
+def _confine_out(path: Path) -> tuple[Path | None, dict | None]:
+    try:
+        import request_guard as wick_rg
+    except Exception:
+        return path, None
+    confined = wick_rg.confine_agent_file(path)
+    if confined is None:
+        return None, {
+            "ok": False,
+            "error": "path_not_confined",
+            "path": str(path)[:200],
+            "hint": "Write under WICK_HOME or set WICK_ALLOW_UNCONFINED_FILES=1",
+        }
+    return confined, None
+
+
 def _wait_login_surface(page, timeout: int = 10000) -> None:
     try:
         page.wait_for_selector(
@@ -301,6 +341,12 @@ def connect():
     browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{PORT}")
     ctx = browser.contexts[0] if browser.contexts else browser.new_context()
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
+    try:
+        import request_guard as wick_rg
+
+        wick_rg.install_playwright_routes(ctx)
+    except Exception:
+        pass
     return pw, browser, ctx, page
 
 
@@ -820,6 +866,10 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
 
     elif action == "tab_new":
         url = args[0] if args else "about:blank"
+        if url and url != "about:blank":
+            url, err = _guard_nav_url(url)
+            if err:
+                return 1, err
         p2 = ctx.new_page()
         if url and url != "about:blank":
             p2.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -847,12 +897,20 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
 
     elif action == "pdf":
         out = Path(args[0] if args else str(Path.home() / ".wick" / "downloads" / "page.pdf"))
+        out, err = _confine_out(out)
+        if err:
+            return 1, err
+        assert out is not None
         out.parent.mkdir(parents=True, exist_ok=True)
         page.pdf(path=str(out), format="A4", print_background=True)
         return 0, {"ok": True, "path": str(out), "bytes": out.stat().st_size}
 
     elif action == "screenshot":
         out = Path(args[0] if args else str(Path.home() / ".wick" / "shots" / "page.png"))
+        out, err = _confine_out(out)
+        if err:
+            return 1, err
+        assert out is not None
         out.parent.mkdir(parents=True, exist_ok=True)
         full = (args[1] == "full") if len(args) > 1 else False
         page.screenshot(path=str(out), full_page=full)
@@ -864,6 +922,10 @@ def _dispatch(page, ctx, action: str, args: list[str]) -> tuple[int, dict]:
             return 1, err
         url = url or args[0]
         out_dir = Path(args[1] if len(args) > 1 else os.environ.get("WICK_DOWNLOADS") or str(Path.home() / ".wick" / "downloads"))
+        out_dir, err = _confine_out(out_dir)
+        if err:
+            return 1, err
+        assert out_dir is not None
         out_dir.mkdir(parents=True, exist_ok=True)
         try:
             with page.expect_download(timeout=15000) as di:
@@ -1027,6 +1089,13 @@ def run_on_page(page, ctx, action: str, raw_args: list[str] | None = None) -> tu
         args, expect = raw, {"url_fragment": None, "element": None}
     try:
         rc, out = _dispatch(page, ctx, action, args)
+        if rc == 0 and isinstance(out, dict) and out.get("ok"):
+            land_page = page
+            if action == "tab_new" and getattr(ctx, "pages", None):
+                land_page = ctx.pages[-1]
+            landed = _guard_landed(land_page)
+            if landed:
+                return 1, landed
     except Exception as e:
         url = ""
         try:

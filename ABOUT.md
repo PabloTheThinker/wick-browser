@@ -48,7 +48,7 @@ What Wick does **not** claim: fingerprint stealth, CAPTCHA bypass, or victory ov
 ## Non-goals
 
 - **Not a human browser.** No GUI, no extensions, no Chrome replacement.
-- **Not a stealth kit.** Shields block private-network probes and isolate sessions; they do not forge fingerprints or apply EasyList as Chromium filters.
+- **Not a stealth kit.** Shields block private-network probes, isolate sessions, and abort a small tracker URL list; they do not forge fingerprints or parse EasyList.
 - **Not a SaaS.** No hosted browsers, no accounts, no usage meters.
 - **Not a framework.** Wick is the browsing layer. Your agent's brain, memory, and goals live in your stack.
 

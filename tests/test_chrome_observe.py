@@ -219,6 +219,29 @@ def test_gather_snap_uses_observe_fetch(monkeypatch):
     assert out["link_count"] >= 1
 
 
+def test_collect_from_page_refuses_private_landing(monkeypatch):
+    class _PrivatePage(_FakePage):
+        url = "http://127.0.0.1/admin"
+
+        def goto(self, url, wait_until="load", timeout=60000):
+            self.url = "http://127.0.0.1/admin"
+            return _FakeResp()
+
+    monkeypatch.delenv("WICK_ALLOW_PRIVATE", raising=False)
+    out = chrome_observe.collect_from_page(
+        _PrivatePage(),
+        "https://example.com/",
+        dump="markdown",
+        max_chars=400,
+        wait_until="domcontentloaded",
+        wait_ms=0,
+    )
+    assert out["ok"] is False
+    assert out["error"] == "private_url"
+    assert out.get("landed") is True
+    assert "content" not in out
+
+
 def test_chrome_fetch_reports_missing_playwright(monkeypatch):
     monkeypatch.setattr(wick, "find_playwright_python", lambda: None)
     result = wick.chrome_fetch("https://example.com/")

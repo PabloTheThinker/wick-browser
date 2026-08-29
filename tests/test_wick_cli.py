@@ -149,7 +149,8 @@ def test_shields_honest_scope_chromium_only(tmp_path, monkeypatch, capsys):
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     scope = " ".join(out.get("honest_scope") or [])
-    assert "does not apply" in scope
+    assert "does not parse ABP lists" in scope or "does not apply" in scope
+    assert "tracker URL" in scope
 
 
 def test_shields_bench_unavailable(capsys):
@@ -189,3 +190,27 @@ def test_playbook_open_uses_observe_fetch(tmp_path, monkeypatch, capsys):
     assert out["results"][0]["result"]["engine"] == "chromium"
     assert out["results"][1].get("soft") is True
     assert calls == ["markdown"]
+
+
+def test_cmd_get_rejects_private_url(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("WICK_HOME", str(tmp_path))
+    monkeypatch.delenv("WICK_ALLOW_PRIVATE", raising=False)
+    ns = type("NS", (), {"url": "http://127.0.0.1/secret", "out": None, "browser": False})()
+    rc = wick.cmd_get(ns)
+    assert rc == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "private_url"
+
+
+def test_cmd_get_rejects_unconfined_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("WICK_HOME", str(tmp_path))
+    monkeypatch.delenv("WICK_ALLOW_UNCONFINED_FILES", raising=False)
+    ns = type(
+        "NS",
+        (),
+        {"url": "https://example.com/", "out": "/tmp/wick-escape.html", "browser": False},
+    )()
+    rc = wick.cmd_get(ns)
+    assert rc == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "path_not_confined"

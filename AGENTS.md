@@ -159,7 +159,7 @@ wick vault lock                                                        # drop gr
 
 Local store is **wickvault2**: AES-256-GCM, HKDF wrap key → vault key → per-item key (same primitive class as Proton Pass / Bitwarden). Secrets still never enter agent JSON. File-key `master.key` is a standing disk key — prefer `WICK_VAULT_PASSPHRASE` + `unlock`/`lock` on shared machines. See [docs/VAULT-CRYPTO.md](docs/VAULT-CRYPTO.md).
 
-Fill is refused on a mismatched origin (phishing page). HTTPS-saved entries never fill on HTTP. `javascript:` / `data:` / private-network URLs are rejected unless `WICK_ALLOW_PRIVATE=1`.
+Fill is refused on a mismatched origin (phishing page). HTTPS-saved entries never fill on HTTP. `javascript:` / `data:` / `file:` / private-network URLs are rejected unless `WICK_ALLOW_PRIVATE=1`. A public URL that redirects or resolves to a private/metadata address is denied (`resolved_private` / landed `private_url`).
 
 Passkeys for agents are **vault-backed WebAuthn**, not Touch ID / hardware keys (those cannot be pressed by a model). `wick vault passkey-new NAME --url URL` stores a discoverable P-256 credential; `wick act passkey URL` injects it through Chromium's CDP virtual authenticator. The private key never enters agent JSON. See [docs/PASSKEYS.md](docs/PASSKEYS.md).
 
@@ -196,7 +196,9 @@ wick session export job42     # redacted cookie metadata
 
 ## Shields
 
-Network blocking on by default (`WICK_SHIELDS=1`). Not full fingerprint stealth. WebRTC LAN IPs are blocked; Client Hints are reduced. Canvas/WebGL farbling is **not** claimed.
+Network blocking on by default (`WICK_SHIELDS=1`): private/metadata request abort, a small built-in tracker URL list, plus `wick-block-urls.txt` when present. EasyList files can be downloaded but are not parsed as ABP filters. Not full fingerprint stealth. WebRTC LAN IPs are blocked; Client Hints are reduced. Canvas/WebGL farbling is **not** claimed.
+
+Observe `links[]` drop `javascript:` / `data:` / `file:` hrefs. Common jailbreak phrases in page text are flagged as `security.injection_probes` (not stripped). Downloads/PDF/screenshots stay under `WICK_HOME` unless `WICK_ALLOW_UNCONFINED_FILES=1`.
 
 CAPTCHA / Cloudflare / Turnstile pages halt vault `login` / secret `fill` / `passkey` with `human_challenge`. A desktop computer-use agent (Hermes, Grokbot, `WICK_HEADLESS=0`, or `WICK_CHALLENGE_COMPUTER_USE=1`) may `cu` / `click_xy` / `type` the puzzle like a person. Wick will not send puzzles to a third-party service.
 

@@ -39,7 +39,26 @@ class TestParseOrigin(unittest.TestCase):
         self.assertTrue(origins.is_private_url("http://localhost:8080/"))
         self.assertTrue(origins.is_private_url("http://192.168.1.4/"))
         self.assertTrue(origins.is_private_url("http://169.254.169.254/latest/meta-data"))
+        self.assertTrue(origins.is_private_url("http://metadata.google.internal/"))
+        self.assertTrue(origins.is_private_url("http://2130706433/"))  # decimal 127.0.0.1
+        self.assertTrue(origins.is_private_host("::ffff:127.0.0.1"))
         self.assertFalse(origins.is_private_url("https://example.com/"))
+
+    def test_guard_rejects_ftp(self):
+        err = origins.guard_fetch_url("ftp://example.com/secret", resolve=False)
+        self.assertIsNotNone(err)
+        self.assertEqual(err["error"], "dangerous_url")
+
+    def test_resolve_private_denied(self):
+        orig = origins.resolve_host_ips
+        origins.resolve_host_ips = lambda host: ["127.0.0.1"] if host == "evil.test" else []
+        try:
+            err = origins.guard_fetch_url("https://evil.test/", resolve=True)
+            self.assertIsNotNone(err)
+            self.assertEqual(err["error"], "resolved_private")
+            self.assertIsNone(origins.guard_fetch_url("https://example.com/", resolve=False))
+        finally:
+            origins.resolve_host_ips = orig
 
 
 class TestOriginCompat(unittest.TestCase):

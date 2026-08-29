@@ -2,7 +2,8 @@
 
 Honest scope:
   - EasyList/EasyPrivacy/Fanboy files can be downloaded via `wick shields --update`.
-    Chromium does not apply those lists as request filters.
+    Chromium does not parse ABP lists. It does abort a small built-in tracker
+    URL list plus `wick-block-urls.txt` (see request_guard).
   - We block private-network SSRF by default.
   - We isolate sessions (cookie jars + Chromium profiles) so agent runs don't cross-contaminate.
   - Privacy headers (DNT / Sec-GPC) are set on the Chromium path when enabled.

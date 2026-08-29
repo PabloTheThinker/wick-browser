@@ -758,7 +758,8 @@ def cmd_shields(args: argparse.Namespace) -> int:
         "shields_env": os.environ.get("WICK_SHIELDS", "1"),
         "session": os.environ.get("WICK_SESSION", "default"),
         "honest_scope": [
-            "EasyList/EasyPrivacy/Fanboy files can be downloaded; Chromium does not apply them as request filters",
+            "EasyList/EasyPrivacy/Fanboy files can be downloaded; Chromium does not parse ABP lists",
+            "Chromium aborts private/metadata requests plus a small built-in tracker URL list (and wick-block-urls.txt)",
             "private-network SSRF block, privacy headers, session isolation",
             "per-session cookie jars + Chromium profiles",
             "NOT full Brave canvas/WebGL fingerprint farbling (engine limit)",
@@ -1381,6 +1382,16 @@ def cmd_shields_bench(args: argparse.Namespace) -> int:
 def cmd_get(args: argparse.Namespace) -> int:
     """Download a URL to session downloads (regular-browser file get)."""
     url = args.url
+    if wick_origins is not None:
+        err = wick_origins.guard_fetch_url(url)
+        if err:
+            print(json.dumps(err))
+            return 1
+    if wick_capability is not None:
+        herr = wick_capability.deny_host(url)
+        if herr:
+            print(json.dumps(herr))
+            return 1
     sess = os.environ.get("WICK_SESSION", "default")
     if wick_shields:
         out_dir = wick_shields.session_downloads(sess)
@@ -1388,6 +1399,26 @@ def cmd_get(args: argparse.Namespace) -> int:
         out_dir = HOME / "downloads"
         out_dir.mkdir(parents=True, exist_ok=True)
     dest = Path(args.out) if args.out else None
+    try:
+        import request_guard as wick_rg
+
+        if dest is not None:
+            confined = wick_rg.confine_agent_file(dest)
+            if confined is None:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "path_not_confined",
+                            "path": str(dest)[:200],
+                            "hint": "Write under WICK_HOME or set WICK_ALLOW_UNCONFINED_FILES=1",
+                        }
+                    )
+                )
+                return 1
+            dest = confined
+    except Exception:
+        pass
     # Prefer Chromium for auth-heavy; curl for simple with optional proxy
     if args.browser:
         if not chrome_up():
@@ -1403,7 +1434,22 @@ def cmd_get(args: argparse.Namespace) -> int:
     # curl path
     name = url.rstrip("/").split("/")[-1].split("?")[0] or "download.bin"
     dest = dest or (out_dir / name)
-    cmd = ["curl", "-fsSL", "-L", "--max-time", "120", "-A", f"Wick/{VERSION}", "-o", str(dest), url]
+    cmd = [
+        "curl",
+        "-fsSL",
+        "-L",
+        "--max-redirs",
+        "8",
+        "--proto",
+        "=https,http",
+        "--max-time",
+        "120",
+        "-A",
+        f"Wick/{VERSION}",
+        "-o",
+        str(dest),
+        url,
+    ]
     proxy = None
     if wick_shields:
         proxy = wick_shields.resolve_proxy()

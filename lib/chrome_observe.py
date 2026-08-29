@@ -348,6 +348,23 @@ def collect_from_page(
         final_url = page.url or url
     except Exception:
         final_url = url
+    try:
+        import origins as wick_origins
+        import request_guard as wick_rg
+
+        links, _dropped = wick_rg.filter_agent_links(links)
+        landed = wick_origins.guard_fetch_url(final_url)
+        if landed:
+            try:
+                page.goto("about:blank")
+            except Exception:
+                pass
+            landed = dict(landed)
+            landed["requested"] = url
+            landed["landed"] = True
+            return landed
+    except Exception:
+        pass
     ms = int((time.time() - t0) * 1000)
     return pack_observe(
         url=final_url,
@@ -398,6 +415,12 @@ def main(argv: list[str] | None = None) -> int:
         browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        try:
+            import request_guard as wick_rg
+
+            wick_rg.install_playwright_routes(ctx)
+        except Exception:
+            pass
         out = collect_from_page(
             page,
             url,
