@@ -1610,28 +1610,56 @@ def cmd_run(args: argparse.Namespace) -> int:
         if act in ("open", "fetch", "probe", "tree", "links", "snap", "elements"):
             url = step.get("url")
             if act == "open":
-                r = lp_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 8000))
+                r = observe_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 8000))
             elif act == "fetch":
-                r = lp_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 12000))
+                r = observe_fetch(url, dump=step.get("dump") or "markdown", max_chars=int(step.get("max") or 12000))
             elif act == "tree":
-                r = lp_fetch(url, dump="semantic_tree_text", max_chars=int(step.get("max") or 40000))
+                r = observe_fetch(url, dump="semantic_tree_text", max_chars=int(step.get("max") or 40000))
             elif act == "probe":
-                # minimal
-                r = lp_fetch(url, dump="markdown", max_chars=12000)
+                r = observe_fetch(url, dump="markdown", max_chars=12000)
                 if r.get("ok"):
                     md = r.get("content") or ""
                     r = {
                         "ok": True,
                         "url": url,
                         "http_ok": r.get("http_ok"),
+                        "engine": r.get("engine"),
                         "chars": r.get("chars"),
                         "link_count": len(extract_md_links(md)),
                         "excerpt": md[:400],
                     }
             elif act == "links":
-                r = lp_fetch(url, dump="markdown", max_chars=100000)
+                r = observe_fetch(url, dump="markdown", max_chars=100000)
                 if r.get("ok"):
-                    r = {"ok": True, "url": url, "links": extract_md_links(r.get("content") or "")}
+                    r = {
+                        "ok": True,
+                        "url": url,
+                        "engine": r.get("engine"),
+                        "links": extract_md_links(r.get("content") or ""),
+                    }
+            elif act == "snap":
+                r = snap_payload(
+                    url or "",
+                    max_chars=int(step.get("max") or 12000),
+                    fast=bool(step.get("fast", True)),
+                    profile=step.get("profile"),
+                )
+            elif act == "elements":
+                r = observe_fetch(
+                    url,
+                    dump="semantic_tree_text",
+                    max_chars=int(step.get("max") or 80000),
+                )
+                if r.get("ok") and wick_elements is not None:
+                    all_e = wick_elements.parse_tree_text(r.get("content") or "")
+                    hit = wick_elements.interactive_only(all_e, limit=int(step.get("limit") or 40))
+                    r = {
+                        "ok": True,
+                        "url": r.get("url") or url,
+                        "engine": r.get("engine"),
+                        "count": len(hit),
+                        "elements": hit,
+                    }
             results.append({"i": i, "action": act, "result": r})
         elif act in (
             "goto", "click", "click_xy", "click_n",
@@ -2382,6 +2410,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         "excerpt": snap.get("excerpt"),
         "element_count": snap.get("element_count"),
         "link_count": snap.get("link_count"),
+        "engine": snap.get("engine"),
         "ms": snap.get("ms"),
         "suggestions": suggestions,
         "hint": "Suggestions are goal-agnostic; pick actions matching your task.",
@@ -2436,6 +2465,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "title": snap.get("title"),
         "query": args.q,
         "query_words": words,
+        "engine": snap.get("engine"),
         "ms": snap.get("ms"),
         "excerpt_match": excerpt_score > 0,
         "excerpt_score": excerpt_score,

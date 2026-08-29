@@ -147,3 +147,33 @@ def test_shields_policy_flag(tmp_path, monkeypatch, capsys):
     assert out["ok"] is True
     assert "evil.test" in out["policy"]["block_hosts"]
     assert out["policy"]["profile"] == "safe-act"
+
+
+def test_playbook_open_uses_observe_fetch(tmp_path, monkeypatch, capsys):
+    calls: list[str] = []
+
+    def fake_obs(url, dump="markdown", **_kw):
+        calls.append(dump)
+        return {
+            "ok": True,
+            "product": "wick",
+            "engine": "chromium",
+            "url": url,
+            "content": "# Example Domain\n",
+            "http_ok": True,
+        }
+
+    monkeypatch.setattr(wick, "observe_fetch", fake_obs)
+    script = tmp_path / "play.json"
+    script.write_text(
+        '[{"action":"open","url":"https://example.com/","max":2000},'
+        '{"action":"snap_note","note":"soft"}]',
+        encoding="utf-8",
+    )
+    rc = wick.cmd_run(type("NS", (), {"script": str(script)})())
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True
+    assert out["results"][0]["result"]["engine"] == "chromium"
+    assert out["results"][1].get("soft") is True
+    assert calls == ["markdown"]
