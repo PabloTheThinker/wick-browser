@@ -113,9 +113,9 @@ wick doctor | version | status
 | Engine | Role | Port (loopback) |
 |--------|------|------------------|
 | **Lightpanda** (default) | Fetch, markdown, tree, shields | `9333` |
-| **Chromium** (Playwright) | Clicks, tabs, PDF, screenshots | `9222` |
+| **Chromium** (Playwright) | Clicks, tabs, PDF, screenshots; observe fallback when Lightpanda is absent | `9222` |
 
-Lightpanda is **AGPL** third-party software invoked as an external binary — not vendored into this MIT repo. Chromium comes via Playwright into a local venv.
+Lightpanda is **AGPL** third-party software invoked as an external binary — not vendored into this MIT repo. Chromium comes via Playwright into a local venv. Observe (`snap` / `plan` / `ask`) works with Chromium alone.
 
 ## Configuration (env)
 

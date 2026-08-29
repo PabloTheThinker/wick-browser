@@ -11,7 +11,9 @@ Think of Wick as two specialists that share a mission:
 | **Light recon** | Lightpanda (default) | Fast fetch, markdown, semantic tree, `snap` / `plan` / `ask` / `elements`, shields |
 | **Heavy contact** | Chromium (Playwright) | Clicks, fills, tabs, PDF, screenshots, downloads |
 
-Recon stays cheap (~tens of MB). Contact lights only when the page must move. Agents should prefer recon until a `hint` or form forces Chromium.
+If Lightpanda is not installed, observe (`snap` / `plan` / `ask` / `open` / `tree` / `links`) automatically uses headless Chromium and still returns `role=` hints. Set `WICK_ENGINE=chromium` to force that path. `wick fetch` stays Lightpanda-explicit.
+
+Recon stays cheap (~tens of MB) when Lightpanda is present. Contact lights only when the page must move. Agents should prefer recon until a `hint` or form forces Chromium.
 
 ```
 Agent

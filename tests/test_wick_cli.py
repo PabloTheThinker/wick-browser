@@ -76,7 +76,7 @@ def test_gather_snap_micro_skips_markdown(monkeypatch):
             "http_status": 200,
         }
 
-    monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
+    monkeypatch.setattr(wick, "observe_fetch", fake_fetch)
     monkeypatch.setattr(wick, "wick_observe_cache", None)
     out = wick._gather_snap("https://example.com/", profile="micro")
     assert out["ok"] is True
@@ -104,7 +104,7 @@ def test_gather_snap_default_fetches_tree_and_markdown(monkeypatch):
             "http_status": 200,
         }
 
-    monkeypatch.setattr(wick, "lp_fetch", fake_fetch)
+    monkeypatch.setattr(wick, "observe_fetch", fake_fetch)
     monkeypatch.setattr(wick, "wick_observe_cache", None)
     out = wick._gather_snap("https://example.com/", profile="default")
     assert out["ok"] is True

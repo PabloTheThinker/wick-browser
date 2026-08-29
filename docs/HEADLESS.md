@@ -35,10 +35,11 @@ Empirically on this host: **~20 MB RSS** serve, **~0.3–0.6 s** simple fetch, m
 ```
 Agent task
    │
-   ├─ read / links / tree / batch  → Lightpanda fetch (default)
-   │     strip ui+invisible, wait-ms 3500, private nets blocked, disk cache
+   ├─ snap / plan / ask / open / tree / links
+   │     Lightpanda fetch when the binary is present (default)
+   │     else headless Chromium (same JSON: title, excerpt, role= hints)
    │
-   ├─ screenshot / complex form UI → Chromium headless-shell (on demand)
+   ├─ screenshot / click / fill / forms → Chromium (on demand)
    │
    └─ never WAN-bind CDP; never paid browser SaaS required
 ```
@@ -57,7 +58,8 @@ Screenshots are the **expensive** path; prefer tree/markdown first (LP docs + ag
 ## CDP reality check
 
 - LP `/json/version` works; Playwright `goto` over LP CDP still flaky on some sites.  
-- Wick therefore uses **native `lightpanda fetch`** for the light path.  
+- Wick therefore uses **native `lightpanda fetch`** for the light path when the binary is present.  
+- Without Lightpanda, `observe_fetch` drives headless Chromium and emits the same JSON (`engine: "chromium"`, `fallback: "chromium"`).  
 - Chromium CDP remains the reliable shot/form session.
 
 ## Security defaults
@@ -69,15 +71,13 @@ Screenshots are the **expensive** path; prefer tree/markdown first (LP docs + ag
 
 ## Commands mapped to engine features
 
-| Wick | Lightpanda |
-|------|------------|
-| `open` / `fetch` | `fetch --dump markdown --json` + strip/cache/wait |
-| `tree` | `fetch --dump semantic_tree_text` |
-| `batch a b c` | `fetch a b c --json` (one process) |
-| `links` | markdown dump + parse |
-| `ensure` / `start` | `serve --host 127.0.0.1 --port 9333` |
-| `metrics` | `GET /metrics` on serve |
-| `shot` / `goto` | Chromium Playwright daemon |
+| Wick | Engine |
+|------|--------|
+| `snap` / `plan` / `ask` / `open` / `tree` / `links` / `batch` | Lightpanda `fetch` when present; else Chromium observe |
+| `fetch` | Lightpanda only (`lightpanda_not_found` if absent) |
+| `ensure` / `start` | Lightpanda `serve` on `127.0.0.1:9333` |
+| `metrics` | `GET /metrics` on Lightpanda serve |
+| `act` / `shot` / `goto` / `pdf` / `tabs` | Chromium Playwright daemon |
 
 ## What we deliberately don’t do
 
