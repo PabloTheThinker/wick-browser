@@ -21,39 +21,28 @@ def _load_wick_module():
 wick = _load_wick_module()
 
 
-def test_lp_fetch_rejects_blank_url():
-    result = wick.lp_fetch("   ")
+def test_observe_fetch_rejects_blank_url():
+    result = wick.observe_fetch("   ")
     assert result["ok"] is False
     assert result["error"] == "no_url"
     assert result["product"] == "wick"
 
 
-def test_lp_fetch_reports_missing_lightpanda(monkeypatch):
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
-    result = wick.lp_fetch("https://example.com/")
-    assert result["ok"] is False
-    assert result["error"] == "lightpanda_not_found"
-    assert result["product"] == "wick"
-
-
-def test_lp_fetch_rejects_javascript_url(monkeypatch):
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
-    result = wick.lp_fetch("javascript:alert(1)")
+def test_observe_fetch_rejects_javascript_url():
+    result = wick.observe_fetch("javascript:alert(1)")
     assert result["ok"] is False
     assert result["error"] == "dangerous_url"
 
 
-def test_lp_fetch_rejects_private_url_when_blocked(monkeypatch):
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
-    result = wick.lp_fetch("http://127.0.0.1:8080/")
+def test_observe_fetch_rejects_private_url_when_blocked():
+    result = wick.observe_fetch("http://127.0.0.1:8080/")
     assert result["ok"] is False
     assert result["error"] in ("private_url", "dangerous_url")
 
 
-def test_lp_fetch_honors_allow_hosts(monkeypatch):
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
+def test_observe_fetch_honors_allow_hosts(monkeypatch):
     monkeypatch.setenv("WICK_ALLOW_HOSTS", "example.com")
-    denied = wick.lp_fetch("https://evil.test/")
+    denied = wick.observe_fetch("https://evil.test/")
     assert denied["ok"] is False
     assert denied["error"] == "host_not_allowed"
 
@@ -147,6 +136,29 @@ def test_shields_policy_flag(tmp_path, monkeypatch, capsys):
     assert out["ok"] is True
     assert "evil.test" in out["policy"]["block_hosts"]
     assert out["policy"]["profile"] == "safe-act"
+
+
+def test_shields_honest_scope_chromium_only(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("WICK_HOME", str(tmp_path))
+    ns = type(
+        "NS",
+        (),
+        {"update": False, "json_only": True, "policy": False, "policy_check": None, "policy_write": None},
+    )()
+    rc = wick.cmd_shields(ns)
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    scope = " ".join(out.get("honest_scope") or [])
+    assert "does not apply" in scope
+
+
+def test_shields_bench_unavailable(capsys):
+    ns = type("NS", (), {"url": "https://example.com/"})()
+    rc = wick.cmd_shields_bench(ns)
+    assert rc == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False
+    assert out["error"] == "shields_bench_unavailable"
 
 
 def test_playbook_open_uses_observe_fetch(tmp_path, monkeypatch, capsys):

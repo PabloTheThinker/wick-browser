@@ -36,16 +36,11 @@ Passkeys: vault-stored resident keys, PKCS#8 wrapped with a dedicated AES-256-GC
 
 ## Fetch / navigation guards (0.9)
 
-Lightpanda `fetch` and Chromium `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost). Override only with `WICK_ALLOW_PRIVATE=1`.
+Chromium observe (`fetch` / `snap`) and `goto`/`login` reject `javascript:`, `data:`, `file:`, `blob:`, and (by default) private-network hosts (`127.0.0.1`, RFC1918, link-local, localhost). Override only with `WICK_ALLOW_PRIVATE=1`.
 
 ## Loopback CDP
 
-Lightpanda and Chromium expose Chrome DevTools Protocol on **127.0.0.1 only** by default:
-
-| Engine | Env | Default |
-|--------|-----|---------|
-| Lightpanda | `WICK_LP_PORT` | `9333` |
-| Chromium | `WICK_CHROME_PORT` | `9222` |
+Chromium exposes Chrome DevTools Protocol on **127.0.0.1 only** by default (`WICK_CHROME_PORT`, `9222`).
 
 Do not WAN-bind these ports. Anyone who can reach CDP can drive the browser as you.
 
@@ -53,9 +48,8 @@ Do not WAN-bind these ports. Anyone who can reach CDP can drive the browser as y
 
 Wick provides **network-layer** privacy inspired by Brave:
 
-- EasyList / EasyPrivacy / Fanboy list blocking (when installed)
-- Custom tracker URL blocks
-- Private-network / SSRF blocking on the Lightpanda fetch path
+- EasyList / EasyPrivacy / Fanboy files can be downloaded (`wick shields --update`); Chromium does **not** apply them as request filters
+- Private-network / SSRF blocking on observe and Chromium goto
 - Optional DNT / Sec-GPC headers
 - Per-session cookie jars and Chromium profiles
 - `wick session export` redacts cookie values by default (`--reveal` is full-act only; redacted exports are not importable)
@@ -67,7 +61,7 @@ Wick does **not** provide Brave-class fingerprint farbling (canvas / WebGL / aud
 - Report known fingerprinting hosts/scripts on observe (`security.fingerprint_probes`)
 - Detect CAPTCHA / Cloudflare / Turnstile / hCaptcha / reCAPTCHA. Vault **login / secret fill / passkey** halt (`human_challenge`). On a headed desktop or with `WICK_CHALLENGE_COMPUTER_USE=1`, computer-use (`cu` / `click_xy` / `type`) may complete the widget the way Hermes or Grokbot would. Wick will not send puzzles to a third-party service.
 
-Treat shields as request filtering, isolation, and honest halt — not “undetectable browsing.”
+Treat shields as SSRF/isolation, privacy headers, and honest halt — not “undetectable browsing” or EasyList-on-Chromium.
 
 ## Proxy credentials
 

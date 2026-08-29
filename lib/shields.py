@@ -1,10 +1,12 @@
 """Wick Shields — Brave-inspired network privacy for agent browsing.
 
 Honest scope:
-  - We block trackers/ads at the *request* layer (EasyList/EasyPrivacy + Wick URL patterns).
+  - EasyList/EasyPrivacy/Fanboy files can be downloaded via `wick shields --update`.
+    Chromium does not apply those lists as request filters.
   - We block private-network SSRF by default.
-  - We isolate sessions (cookie jars) so agent runs don't cross-contaminate.
-  - We do NOT claim Brave-grade canvas/WebGL farbling inside Lightpanda (engine limitation).
+  - We isolate sessions (cookie jars + Chromium profiles) so agent runs don't cross-contaminate.
+  - Privacy headers (DNT / Sec-GPC) are set on the Chromium path when enabled.
+  - We do NOT claim Brave-grade canvas/WebGL farbling (Chromium limitation).
   - Chromium shot path gets automation-hardening flags; still not a full anti-detect browser.
 """
 from __future__ import annotations
@@ -209,38 +211,6 @@ def sweep_sessions(*, now: float | None = None) -> dict[str, Any]:
 def session_cookie_paths(name: str = "default") -> tuple[Path, Path]:
     d = session_dir(name)
     return d / "load.json", d / "jar.json"
-
-
-def append_lp_shield_args(
-    cmd: list[str],
-    *,
-    shields: bool = True,
-    session: str = "default",
-    block_private: bool = True,
-    extra_block_urls: list[str] | None = None,
-) -> list[str]:
-    """Mutate/return lightpanda argv with Shields + session cookies."""
-    ensure_shield_dirs()
-    if block_private:
-        if "--block-private-networks" not in cmd:
-            cmd.append("--block-private-networks")
-
-    if shields:
-        for p in adblock_lists(True):
-            cmd.extend(["--adblock-lists", str(p)])
-        for pat in block_url_patterns():
-            cmd.extend(["--block-urls", pat])
-        if extra_block_urls:
-            for pat in extra_block_urls:
-                cmd.extend(["--block-urls", pat])
-
-    load, jar = session_cookie_paths(session)
-    # Always write jar for session continuity
-    cmd.extend(["--cookie-jar", str(jar)])
-    if load.is_file() and load.stat().st_size > 2:
-        cmd.extend(["--cookie", str(load)])
-    # After runs, agents can promote jar → load via `wick session save`
-    return cmd
 
 
 def promote_jar_to_load(session: str = "default") -> dict:
@@ -473,7 +443,7 @@ def import_session(name: str, payload: Any) -> dict[str, Any]:
 
 
 def resolve_proxy() -> str | None:
-    """Proxy URL for Lightpanda --http-proxy. Never log credentials."""
+    """Proxy URL from env. Never log credentials."""
     for key in ("WICK_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
         v = os.environ.get(key, "").strip()
         if v:

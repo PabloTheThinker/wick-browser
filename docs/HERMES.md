@@ -1,6 +1,6 @@
 # Using Wick from Hermes, Claude, ChatGPT, and Grok
 
-Wick is a **browser for agents**. Observe is cheap (Lightpanda). Clicking is expensive (Chromium). Every command prints one JSON object.
+Wick is a **browser for agents**. Observe is a compact JSON snap from headless Chromium. Clicking uses the same session. Every command prints one JSON object.
 
 This page is the harness map. Examples stay on `https://example.com/` only.
 
@@ -52,7 +52,7 @@ For a login job, start a **separate** Hermes turn (or raise the process to `full
 
 ### Loop Hermes should follow
 
-1. **`snap`** `{url, profile: "micro"}` — title, interactive elements, `role=` hints. One Lightpanda tree fetch. No markdown.
+1. **`snap`** `{url, profile: "micro"}` — title, interactive elements, `role=` hints. Tree only. No markdown.
 2. If the excerpt is not enough, **`ask`** `{url, q: "terms"}` or **`plan`** `{url}` (same observe cache, ~8s TTL).
 3. Need the long read? **`open`** `{url, fast: true}`.
 4. Must click? **`act`** `{action: "click", rest: ["role=link[name=\"More information\"]"]}`.

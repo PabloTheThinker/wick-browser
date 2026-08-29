@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for Chromium observe fallback (no browser required)."""
+"""Unit tests for Chromium observe (no browser required)."""
 from __future__ import annotations
 
 import importlib.util
@@ -96,7 +96,6 @@ def test_pack_observe_markdown_and_tree():
     assert packed["ok"] is True
     assert packed["engine"] == "chromium"
     assert packed["http_ok"] is True
-    assert packed["fallback"] == "chromium"
     assert "# Example Domain" in packed["content"]
 
     tree = chrome_observe.pack_observe(
@@ -166,10 +165,7 @@ def test_collect_from_page_markdown():
     assert "More information" in out["content"]
 
 
-def test_observe_fetch_falls_back_to_chromium(monkeypatch):
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
-    monkeypatch.setattr(wick, "resolve_engine", lambda _req=None: "chromium")
-
+def test_observe_fetch_uses_chromium(monkeypatch):
     def fake_chrome(url, dump="markdown", **_kw):
         return {
             "ok": True,
@@ -180,26 +176,12 @@ def test_observe_fetch_falls_back_to_chromium(monkeypatch):
             "content": "# Example Domain\n",
             "http_ok": True,
             "http_status": 200,
-            "fallback": "chromium",
         }
 
     monkeypatch.setattr(wick, "chrome_fetch", fake_chrome)
     out = wick.observe_fetch("https://example.com/", dump="markdown")
     assert out["ok"] is True
     assert out["engine"] == "chromium"
-    assert out["fallback"] == "chromium"
-
-
-def test_observe_fetch_prefers_lightpanda_when_present(monkeypatch):
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: Path("/usr/bin/true"))
-    monkeypatch.setattr(wick, "resolve_engine", lambda _req=None: "lightpanda")
-
-    def fake_lp(url, dump="markdown", **_kw):
-        return {"ok": True, "engine": "lightpanda", "url": url, "dump": dump}
-
-    monkeypatch.setattr(wick, "lp_fetch", fake_lp)
-    out = wick.observe_fetch("https://example.com/")
-    assert out["engine"] == "lightpanda"
 
 
 def test_observe_fetch_rejects_blank_url():
@@ -237,9 +219,8 @@ def test_gather_snap_uses_observe_fetch(monkeypatch):
     assert out["link_count"] >= 1
 
 
-def test_lp_fetch_still_reports_missing_lightpanda(monkeypatch):
-    """Raw Lightpanda fetch stays explicit; observe_fetch is the agent fallback."""
-    monkeypatch.setattr(wick, "find_lightpanda", lambda: None)
-    result = wick.lp_fetch("https://example.com/")
+def test_chrome_fetch_reports_missing_playwright(monkeypatch):
+    monkeypatch.setattr(wick, "find_playwright_python", lambda: None)
+    result = wick.chrome_fetch("https://example.com/")
     assert result["ok"] is False
-    assert result["error"] == "lightpanda_not_found"
+    assert result["error"] == "engine_unavailable"

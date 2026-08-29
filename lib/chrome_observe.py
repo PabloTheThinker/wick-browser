@@ -1,8 +1,7 @@
-"""Chromium observe fallback — same JSON shape as Lightpanda fetch.
+"""Chromium observe — markdown + semantic tree for snap/plan/ask.
 
-When Lightpanda is absent, snap/plan/ask/open/tree/links still work for
-agents by driving headless Chromium. Tree text is Lightpanda-shaped so
-lib/elements.py can parse role= hints for wick act click.
+Tree text is Wick-shaped so lib/elements.py can parse role= hints
+for wick act click.
 """
 from __future__ import annotations
 
@@ -108,7 +107,7 @@ def _quote_name(name: str) -> str:
 
 
 def flatten_a11y(node: dict[str, Any] | None, *, start_id: int = 1) -> str:
-    """Turn a Playwright accessibility snapshot into Lightpanda tree text."""
+    """Turn a Playwright accessibility snapshot into Wick tree text."""
     lines: list[str] = []
     nid = start_id
 
@@ -241,7 +240,7 @@ def pack_observe(
     wait_until: str,
     wait_ms: int,
 ) -> dict[str, Any]:
-    """Match lp_fetch pack_one so snap/plan/ask stay engine-agnostic."""
+    """Pack observe JSON so snap/plan/ask share one contract."""
     if dump == "semantic_tree_text":
         content = tree_text
     elif dump == "semantic_tree":
@@ -267,7 +266,6 @@ def pack_observe(
         "wait_until": wait_until,
         "wait_ms": wait_ms,
         "title": title,
-        "fallback": "chromium",
     }
     if dump == "semantic_tree":
         body["tree"] = {"text": tree_text, "links": links}

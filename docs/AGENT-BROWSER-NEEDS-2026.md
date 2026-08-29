@@ -11,7 +11,7 @@ Scope constraints for this doc:
 
 ## 0) Status as of 0.9 (this branch)
 
-Shipped since this brief was written: origin-bound vault + `act login`, ephemeral sessions, capability profiles, `WICK_ALLOW_HOSTS` + **`WICK_BLOCK_HOSTS` (deny wins)**, unified SSRF on both engines, `untrusted_content` on observe, `wick tools` + `wick rpc stdio`, `wick mcp` (Hermes / Claude / Cursor), snapshot profiles (`micro|default|full`), parallel `snap-many`, snap `timing` breakdowns, computer-use (`cu` / `click_n` / `click_xy` / `type`), structured action errors, `--expect-url-fragment` / `--expect-element`, harness **`wick approve`** for login/fill/passkey, and **vault-backed passkeys** via Chromium's CDP virtual authenticator. Chromium fixture tests drive a local page through `cu` → `type_n` → `click_n` → `wait_text` and a localhost WebAuthn assert.
+Shipped since this brief was written: origin-bound vault + `act login`, ephemeral sessions, capability profiles, `WICK_ALLOW_HOSTS` + **`WICK_BLOCK_HOSTS` (deny wins)**, unified SSRF on Chromium observe and act, `untrusted_content` on observe, `wick tools` + `wick rpc stdio`, `wick mcp` (Hermes / Claude / Cursor), snapshot profiles (`micro|default|full`), parallel `snap-many`, snap `timing` breakdowns, computer-use (`cu` / `click_n` / `click_xy` / `type`), structured action errors, `--expect-url-fragment` / `--expect-element`, harness **`wick approve`** for login/fill/passkey, and **vault-backed passkeys** via Chromium's CDP virtual authenticator. Chromium fixture tests drive a local page through `cu` → `type_n` → `click_n` → `wait_text` and a localhost WebAuthn assert.
 
 Shipped on this branch: `wick shields --policy` (file overlay on allow/deny + harness knobs), `WICK_VAULT_REQUIRE_GRANT`, redacted `wick session export` / import, and two-step login retry. Independent crypto audit is **not** claimed.
 
@@ -22,8 +22,8 @@ Wick already matches several core 2026 expectations:
 - **Token-aware observe path:** `snap` gives compact title/excerpt/links/elements; `ask` filters deterministically without LLM calls.
 - **Action primitives exist:** `act` includes `click`, `fill`, `scroll`, `wait_url`, plus tabs/PDF/screenshot.
 - **Session isolation exists:** `WICK_SESSION` maps to per-session cookie jars and Chromium profile/download dirs.
-- **Security posture is explicit:** loopback CDP, private-network blocking on light path, shields honesty, proxy redaction in command tails.
-- **Speed primitives exist:** `--fast`, `batch`, HTTP cache, light-vs-heavy engine split.
+- **Security posture is explicit:** loopback CDP, private-network blocking, shields honesty, proxy redaction in command tails.
+- **Speed primitives exist:** `--fast`, `batch`, HTTP cache, one Chromium daemon for observe and act.
 
 Wick is already directionally correct. The remaining work for 0.7 is about reliability, guardrails, and integration ergonomics.
 
@@ -111,18 +111,18 @@ Needed:
 - Loopback-only control planes (CDP, RPC) are mandatory but not sufficient.
 
 Wick now:
-- Private-network block exists for light path.
+- Private-network block on observe and Chromium goto.
 - CDP binds 127.0.0.1.
 - Proxy credentials are intentionally redacted in command-tail error paths.
 
 Remaining gaps:
 - No first-class prompt-injection annotation/sanitization policy in `snap`/`ask` output.
-- SSRF controls are weaker on Chromium action path than on Lightpanda fetch path.
+- SSRF controls apply on Chromium observe and goto (private hosts blocked unless `WICK_ALLOW_PRIVATE=1`).
 - No capability scoping model for which actions are allowed in a given run.
 
 Needed:
 - Content trust metadata in observation outputs (for harness policy).
-- Optional outbound allowlist policy (host/domain regex) for both engines.
+- Optional outbound allowlist policy (host/domain regex) for observe and act.
 - Capability profiles (`observe-only`, `observe+safe-act`, `full-act`) enforced at CLI/runtime.
 
 ---
@@ -202,12 +202,12 @@ Primary file touches:
 
 ---
 
-### P0-3: Unified SSRF/Outbound Policy Across Engines
+### P0-3: Unified SSRF/Outbound Policy
 Goal:
-- Enforce shared allow/deny policy for both light fetch and Chromium actions.
+- Enforce shared allow/deny policy for Chromium observe and act.
 
 Why:
-- Current strongest SSRF controls are concentrated in light path; heavy path should match policy.
+- Observe and act must share the same URL/SSRF guards (shipped).
 
 CLI impact:
 - Add optional global policy env/flags, for example:
@@ -217,7 +217,7 @@ CLI impact:
 
 Primary file touches:
 - `lib/shields.py` (policy parser/helpers).
-- `bin/wick` (policy wiring for `lp_fetch` and Chromium startup/action calls).
+- `bin/wick` (policy wiring for observe_fetch and Chromium startup/action calls).
 - `lib/chrome_actions.py` (pre-action URL checks where applicable).
 - `docs/SECURITY.md` (threat model and policy examples).
 - `tests/test_wick_cli.py` (policy enforcement tests).
@@ -299,7 +299,7 @@ Why:
 - Makes automatic wait/cache tuning possible in agent harnesses.
 
 Primary file touches:
-- `bin/wick` (timing fields from `lp_fetch`/`_gather_snap`).
+- `bin/wick` (timing fields from observe_fetch / `_gather_snap`).
 - `docs/HEADLESS.md` (measurement guidance).
 - `tests/test_wick_cli.py`.
 

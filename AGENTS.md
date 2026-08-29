@@ -2,7 +2,7 @@
 
 Wick is a **browser for agents** — not a human GUI with an API bolted on.
 
-**Wick brothers:** light recon (Lightpanda) for observe, heavy contact (Chromium) when you must click. If Lightpanda is missing, observe falls back to headless Chromium and still returns `role=` hints. One clean JSON surface. See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
+Headless Chromium for observe and act. One clean JSON surface. See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
 
 ## Recommended loop: snap → plan → ask → act
 

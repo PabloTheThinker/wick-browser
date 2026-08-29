@@ -2,7 +2,7 @@
 
 ## Headline
 
-The vault now behaves like a human password manager for agents: **suggest** a login, **autofill** only on a matching origin, **never** put the secret in model context. Observe loops are faster. Chromium gets the same private-network / dangerous-URL guards as the light path.
+The vault now behaves like a human password manager for agents: **suggest** a login, **autofill** only on a matching origin, **never** put the secret in model context. Observe loops are faster. Chromium observe and act share the same private-network / dangerous-URL guards.
 
 ## New
 

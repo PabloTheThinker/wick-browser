@@ -1,29 +1,18 @@
 # Wick as an agent browser
 
-Wick 0.9 is built so agents can **observe → plan → ask → act** (and **login**) without a human GUI in the loop. One JSON surface. Two engines. No drama.
-
-## Wick brothers
-
-Think of Wick as two specialists that share a mission:
-
-| Brother | Engine | Job |
-|---------|--------|-----|
-| **Light recon** | Lightpanda (default) | Fast fetch, markdown, semantic tree, `snap` / `plan` / `ask` / `elements`, shields |
-| **Heavy contact** | Chromium (Playwright) | Clicks, fills, tabs, PDF, screenshots, downloads |
-
-If Lightpanda is not installed, observe (`snap` / `plan` / `ask` / `open` / `tree` / `links`) automatically uses headless Chromium and still returns `role=` hints. Set `WICK_ENGINE=chromium` to force that path. `wick fetch` stays Lightpanda-explicit.
-
-Recon stays cheap (~tens of MB) when Lightpanda is present. Contact lights only when the page must move. Agents should prefer recon until a `hint` or form forces Chromium.
+Wick 0.9 is built so agents can **observe → plan → ask → act** (and **login**) without a human GUI in the loop. One JSON surface. Headless Chromium. No drama.
 
 ```
 Agent
   │
-  ├─ observe  → snap / elements / open / tree   (light recon)
+  ├─ observe  → snap / elements / open / tree
   ├─ plan     → wick plan   (suggested next actions)
   ├─ ask      → wick ask    (filter targets by query, no LLM)
-  ├─ act      → wick act …                      (heavy contact)
+  ├─ act      → wick act …
   └─ batch    → wick run playbook.json
 ```
+
+Observe and act share the same Chromium daemon. Prefer `snap` until a `hint` or form forces a click.
 
 ## Observe — `snap`
 

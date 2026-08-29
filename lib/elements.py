@@ -1,4 +1,4 @@
-"""Parse Lightpanda semantic_tree_text into agent-actionable elements."""
+"""Parse Wick semantic_tree_text into agent-actionable elements."""
 from __future__ import annotations
 
 import re
