@@ -88,6 +88,36 @@ WICK_TOOLS: list[dict[str, Any]] = [
         },
     ),
     _fn(
+        "wick_search",
+        "Headless web search. Structured results (title, url, snippet, snap cmd). No screenshots. Default engine is DuckDuckGo HTML.",
+        {
+            "type": "object",
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "description": "Search query, e.g. example domain IANA.",
+                },
+                "engine": {
+                    "type": "string",
+                    "enum": ["ddg", "ddg_lite", "wiki"],
+                    "description": "ddg=DuckDuckGo HTML (default), ddg_lite, wiki=Wikipedia OpenSearch.",
+                    "default": "ddg",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (1–25).",
+                    "default": 8,
+                },
+                "chromium": {
+                    "type": "boolean",
+                    "description": "Force Chromium observe of the SERP instead of HTTP.",
+                    "default": False,
+                },
+            },
+            "required": ["q"],
+        },
+    ),
+    _fn(
         "wick_ask",
         "Snap + deterministic filter of links/elements/excerpt by query words (no LLM).",
         {

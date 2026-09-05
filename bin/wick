@@ -80,6 +80,14 @@ try:
     import policy as wick_policy
 except Exception:
     wick_policy = None  # type: ignore
+try:
+    import search as wick_search
+except Exception:
+    wick_search = None  # type: ignore
+try:
+    import http_observe as wick_http_observe
+except Exception:
+    wick_http_observe = None  # type: ignore
 
 VERSION = "0.9.0"
 
@@ -427,8 +435,33 @@ def observe_fetch(
     max_chars: int = 12000,
     **kw,
 ) -> dict:
-    """Agent observe via headless Chromium (snap/plan/ask/open/fetch)."""
-    return chrome_fetch(url, dump=dump, max_chars=max_chars, **kw)
+    """Observe a URL. Chromium when available; static HTTP otherwise.
+
+    Search follow-up (`wick snap` of a result) must work without Playwright.
+    Force HTTP with WICK_OBSERVE=http. SPAs still need Chromium.
+    """
+    force_http = wick_http_observe is not None and wick_http_observe.prefer_http()
+    if not force_http and find_playwright_python():
+        return chrome_fetch(url, dump=dump, max_chars=max_chars, **kw)
+    if wick_http_observe is None:
+        return chrome_fetch(url, dump=dump, max_chars=max_chars, **kw)
+    urls, err = _prepare_observe_urls(url)
+    if err:
+        return err
+    assert urls is not None
+    results: list[dict] = []
+    for u in urls:
+        results.append(wick_http_observe.http_fetch(u, dump=dump or "markdown", max_chars=max_chars))
+    if len(results) == 1:
+        return results[0]
+    return {
+        "ok": all(r.get("ok") for r in results),
+        "product": "wick",
+        "engine": "http",
+        "batch": True,
+        "count": len(results),
+        "results": results,
+    }
 
 
 def run_pw(script: str, *extra: str) -> int:
@@ -452,6 +485,8 @@ def cmd_version(_: argparse.Namespace) -> int:
                 "version": VERSION,
                 "home": str(HOME),
                 "engine": "chromium",
+                "headless": os.environ.get("WICK_HEADLESS", "1") != "0",
+                "search": ["ddg", "ddg_lite", "wiki"],
                 "chromium": {
                     "up": chrome_up(),
                     "cdp": f"http://127.0.0.1:{CHROME_PORT}",
@@ -479,7 +514,11 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     print(f"playwright: {find_playwright_python()}")
     print(f"chrome_cdp:{CHROME_PORT} up={chrome_up()}")
     print("engine: chromium")
-    print(f"observe: {'chromium' if find_playwright_python() else 'unavailable'}")
+    print(f"headless: {os.environ.get('WICK_HEADLESS', '1') != '0'}")
+    print("search: ddg html (http, no pixels)")
+    print(
+        f"observe: {'chromium' if find_playwright_python() else 'http (static HTML, no JS)'}"
+    )
     print("license_layer: MIT (orchestration) · Chromium via Playwright")
     print("paid: no")
     return 0
@@ -1171,6 +1210,15 @@ def cmd_run(args: argparse.Namespace) -> int:
             if denied:
                 results.append({"i": i, "action": act, "result": denied})
                 continue
+        if act == "search":
+            r = search_payload(
+                step.get("q") or step.get("query") or "",
+                engine=step.get("engine"),
+                limit=int(step.get("limit") or 8),
+                chromium=bool(step.get("chromium")),
+            )
+            results.append({"i": i, "action": act, "result": r})
+            continue
         if act in ("open", "fetch", "probe", "tree", "links", "snap", "elements"):
             url = step.get("url")
             if act == "open":
@@ -1902,6 +1950,85 @@ def snap_many_payload(
     }
 
 
+def search_payload(
+    q: str | list[str],
+    *,
+    engine: str | None = None,
+    limit: int = 8,
+    chromium: bool = False,
+) -> dict:
+    """Headless web search. HTTP first; Chromium only if asked or HTTP is empty."""
+    if wick_search is None:
+        return {"ok": False, "product": "wick", "error": "search_module_missing"}
+    query = wick_search.normalize_query(q)
+    if not query:
+        return {"ok": False, "product": "wick", "error": "missing_query", "hint": "wick search example domain"}
+    eng = wick_search.engine_name(engine)
+    dest = wick_search.search_url(query, eng)
+    if not chromium:
+        out = wick_search.run_search(query, engine=eng, limit=limit)
+        if out.get("ok") and (out.get("count") or 0) > 0:
+            return out
+        if out.get("ok") is False and out.get("error") in {
+            "dangerous_url",
+            "private_url",
+            "resolved_private",
+            "host_not_allowed",
+            "missing_query",
+            "unknown_engine",
+        }:
+            return out
+        empty = out
+    else:
+        empty = None
+    if not find_playwright_python():
+        return empty or {
+            "ok": False,
+            "product": "wick",
+            "error": "search_empty",
+            "engine": eng,
+            "url": dest,
+            "hint": "HTTP SERP was empty and Playwright is not installed. Try --engine wiki.",
+        }
+    dump = "html" if eng != "wiki" else "markdown"
+    fetched = observe_fetch(dest, dump=dump, max_chars=200000, wait_until="domcontentloaded", wait_ms=1200)
+    if not fetched.get("ok"):
+        return empty or fetched
+    html = str(fetched.get("content") or "")
+    wiki_json = None
+    if eng == "wiki":
+        try:
+            wiki_json = json.loads(html)
+        except ValueError:
+            wiki_json = None
+    return wick_search.run_search(
+        query,
+        engine=eng,
+        limit=limit,
+        html=None if eng == "wiki" else html,
+        wiki_json=wiki_json,
+        via="chromium",
+        url=str(fetched.get("url") or dest),
+        http_status=fetched.get("http_status"),
+        ms=int(fetched.get("ms") or 0),
+    )
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    """Agent web search: structured results, no screenshots."""
+    q = getattr(args, "q", None)
+    if isinstance(q, list):
+        q = " ".join(str(x) for x in q)
+    out = search_payload(
+        q or "",
+        engine=getattr(args, "engine", None),
+        limit=int(getattr(args, "limit", 8) or 8),
+        chromium=bool(getattr(args, "chromium", False)),
+    )
+    print(json.dumps(out, ensure_ascii=False))
+    return 0 if out.get("ok") else 1
+
+
 def cmd_snap_many(args: argparse.Namespace) -> int:
     """Bounded-concurrency observe for agent planners."""
     out = snap_many_payload(
@@ -2377,6 +2504,15 @@ def _rpc_handlers() -> dict:
           return {"ok": False, "error": "tools_schema_missing"}
       return wick_tools_schema.tools_export(VERSION)
 
+  def _search(args: dict) -> dict:
+      q = args.get("q") or args.get("query") or ""
+      return search_payload(
+          q,
+          engine=args.get("engine"),
+          limit=int(args.get("limit") or 8),
+          chromium=bool(args.get("chromium")),
+      )
+
   def _snap_many(args: dict) -> dict:
       urls = args.get("urls")
       if not isinstance(urls, list) or not urls:
@@ -2409,6 +2545,7 @@ def _rpc_handlers() -> dict:
       "act": _act,
       "vault": _vault,
       "session": _session,
+      "search": _search,
       "snap_many": _snap_many,
       "snap-many": _snap_many,
       "tools": _tools,
@@ -2800,6 +2937,12 @@ def main() -> int:
     _add_observe_profile(p)
     _add_json_only(p)
 
+    p = sub.add_parser("search", help="Headless web search (structured results, no pixels)")
+    p.add_argument("q", nargs="+", help="Search query")
+    p.add_argument("--engine", default=None, help="ddg (default), ddg_lite, or wiki")
+    p.add_argument("--limit", type=int, default=8)
+    p.add_argument("--chromium", action="store_true", help="Force Chromium observe of the SERP")
+    p.add_argument("--json", dest="json_only", action="store_true")
     p = sub.add_parser("ask", help="Snap + fuzzy filter links/elements by query (no LLM)")
     p.add_argument("url")
     p.add_argument("--q", required=True, help="search terms (word substring match)")
@@ -2920,6 +3063,7 @@ def main() -> int:
         "rpc": cmd_rpc,
         "mcp": cmd_mcp,
         "plan": cmd_plan,
+        "search": cmd_search,
         "ask": cmd_ask,
         "goto": cmd_goto,
         "shot": cmd_shot,

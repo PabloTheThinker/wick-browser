@@ -1,10 +1,11 @@
 # Wick as an agent browser
 
-Wick 0.9 is built so agents can **observe → plan → ask → act** (and **login**) without a human GUI in the loop. One JSON surface. Headless Chromium. No drama.
+Wick 0.9 is built so agents can **search → snap → plan → ask → act** (and **login**) without a human GUI in the loop. One JSON surface. Headless by default. See [SEARCH.md](SEARCH.md).
 
 ```
 Agent
   │
+  ├─ search   → wick search "query"   (HTTP SERP, no pixels)
   ├─ observe  → snap / elements / open / tree
   ├─ plan     → wick plan   (suggested next actions)
   ├─ ask      → wick ask    (filter targets by query, no LLM)
@@ -12,7 +13,18 @@ Agent
   └─ batch    → wick run playbook.json
 ```
 
-Observe and act share the same Chromium daemon. Prefer `snap` until a `hint` or form forces a click.
+Start with `search` when you do not have a URL. `snap` of a result uses Chromium when Playwright is installed, otherwise a guarded HTTP parse of static HTML. Prefer `snap` until a `hint` or form forces a click.
+
+## Search — `wick search`
+
+Headless web search. Structured results. No screenshots. Default engine is DuckDuckGo HTML.
+
+```bash
+wick search "example domain"
+wick search "example domain" --engine wiki
+```
+
+Each result includes `title`, `url`, `snippet`, and a ready `cmd` (`wick snap URL --profile micro`). Titles and snippets are untrusted. Full contract: [SEARCH.md](SEARCH.md).
 
 ## Observe — `snap`
 

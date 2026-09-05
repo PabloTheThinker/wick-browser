@@ -1,6 +1,6 @@
 # Using Wick from Hermes, Claude, ChatGPT, and Grok
 
-Wick is a **browser for agents**. Observe is a compact JSON snap from headless Chromium. Clicking uses the same session. Every command prints one JSON object.
+Wick is a **browser for agents**. Search the web with `search` (HTTP, no pixels). Observe a result URL with `snap`. Clicking uses the same session. Every command prints one JSON object.
 
 This page is the harness map. Examples stay on `https://example.com/` only.
 
@@ -8,11 +8,11 @@ This page is the harness map. Examples stay on `https://example.com/` only.
 
 | Agent | How it talks to Wick | First observe | When to click |
 |-------|----------------------|---------------|---------------|
-| **Hermes Agent** (Nous) | MCP: `wick mcp` in `~/.hermes/config.yaml` | `snap` `profile=micro` | `act` with `elements[].hint` |
-| **Claude** (Desktop / Cursor / API) | MCP stdio (`wick mcp`) or CLI | `snap --profile micro` | `act click 'role=…'` |
-| **ChatGPT** (function calling) | `wick tools` → OpenAI `tools[]` + `wick rpc stdio` | `wick_snap` `profile=micro` | `wick_act` |
-| **Grok** (function calling) | Same as ChatGPT: `tools[]` + JSON-lines RPC | `wick_snap` | `wick_act` |
-| **Any CLI agent** | `bin/wick` | `wick snap URL --profile micro` | `wick act …` |
+| **Hermes Agent** (Nous) | MCP: `wick mcp` in `~/.hermes/config.yaml` | `search` then `snap` `profile=micro` | `act` with `elements[].hint` |
+| **Claude** (Desktop / Cursor / API) | MCP stdio (`wick mcp`) or CLI | `search` then `snap --profile micro` | `act click 'role=…'` |
+| **ChatGPT** (function calling) | `wick tools` → OpenAI `tools[]` + `wick rpc stdio` | `wick_search` then `wick_snap` `profile=micro` | `wick_act` |
+| **Grok** (function calling) | Same as ChatGPT: `tools[]` + JSON-lines RPC | `wick_search` then `wick_snap` | `wick_act` |
+| **Any CLI agent** | `bin/wick` | `wick search "query"` then `wick snap URL --profile micro` | `wick act …` |
 
 Hermes already ships its own browser tools (`browser_navigate`, `browser_snapshot` with `@e1` refs, `browser_click`). Use those when you are already in a Chromium session. Use **Wick** when you want:
 
@@ -44,7 +44,7 @@ Capability meaning:
 
 | `WICK_PROFILE` | Hermes may | Hermes may not |
 |----------------|------------|----------------|
-| `observe-only` | `snap` / `plan` / `ask` / `open` / `vault suggest` | any Chromium click |
+| `observe-only` | `search` / `snap` / `plan` / `ask` / `open` / `vault suggest` | any Chromium click |
 | `safe-act` (recommended) | observe + `goto` / `click` / `cu` / `type` | `fill`, `login`, `eval`, downloads |
 | `full-act` | everything, including `act login` | — |
 
@@ -52,7 +52,7 @@ For a login job, start a **separate** Hermes turn (or raise the process to `full
 
 ### Loop Hermes should follow
 
-1. **`snap`** `{url, profile: "micro"}` — title, interactive elements, `role=` hints. Tree only. No markdown.
+1. **`search`** `{q}` when you do not have a URL — structured SERP, no pixels. Then **`snap`** `{url, profile: "micro"}` — title, interactive elements, `role=` hints. Tree only. No markdown.
 2. If the excerpt is not enough, **`ask`** `{url, q: "terms"}` or **`plan`** `{url}` (same observe cache, ~8s TTL).
 3. Need the long read? **`open`** `{url, fast: true}`.
 4. Must click? **`act`** `{action: "click", rest: ["role=link[name=\"More information\"]"]}`.
@@ -143,7 +143,7 @@ Env: `WICK_SNAP_PROFILE=micro` when `--profile` is omitted.
 
 ## MCP tools (short names)
 
-`snap`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`.
+`search`, `snap`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`.
 
 Aliases `wick_snap` … still resolve so mixed harnesses do not break.
 
