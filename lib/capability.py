@@ -83,6 +83,7 @@ _OBSERVE_CMDS = frozenset(
         "elements",
         "plan",
         "ask",
+        "search",
         "tools",
         "rpc",
         "mcp",

@@ -4,13 +4,14 @@ Wick is a **browser for agents** — not a human GUI with an API bolted on.
 
 Headless Chromium for observe and act. One clean JSON surface. See [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md).
 
-## Recommended loop: snap → plan → ask → act
+## Recommended loop: search → snap → plan → ask → act
 
-1. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements) 
-2. **`wick plan URL --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why` 
-3. **`wick ask URL --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM) 
-4. **`wick act …`** — Chromium when you must click, type, wait, PDF. Computer-use: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON).
-5. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
+1. **`wick search "terms"`** — headless web search (title, url, snippet, snap cmd). No pixels. Default engine is DuckDuckGo HTML.
+2. **`wick snap URL --fast`** — situation report (title, excerpt, links, interactive elements)
+3. **`wick plan URL --fast`** — goal-agnostic next-step suggestions, each with a ready-to-run `cmd` and a `why`
+4. **`wick ask URL --q "terms"`** — filter links/elements/excerpt by query words (substring match, no LLM)
+5. **`wick act …`** — Chromium when you must click, type, wait, PDF. Computer-use: `wick act cu` then `click_n` / `click_xy` / `type`. For logins: `wick vault suggest --url URL` then `wick act login URL` (origin-bound autofill; secrets never enter JSON).
+6. **`wick run playbook.json`** — multi-step jobs (unknown actions soft-ignored) 
 
 Still available when you need them: `wick elements URL` (dense target list) and `wick open URL --fast` (full markdown, the long read). **`wick observe`** is an alias for **`wick snap`**.
 
@@ -35,12 +36,12 @@ mcp_servers:
       WICK_PROFILE: safe-act
 ```
 
-Loop: `snap` `profile=micro` → `plan` / `ask` → `act` with `elements[].hint`. Vault login only under `WICK_PROFILE=full-act`.
+Loop: `search` → `snap` `profile=micro` → `plan` / `ask` → `act` with `elements[].hint`. Vault login only under `WICK_PROFILE=full-act`.
 
 ### ChatGPT / Grok — OpenAI tools + RPC
 
 ```bash
-wick tools          # tools[] for wick_snap, wick_plan, wick_snap_many, wick_act, …
+wick tools          # tools[] for wick_search, wick_snap, wick_plan, wick_snap_many, wick_act, …
 wick rpc stdio      # one JSON line in, one JSON object out
 ```
 
@@ -49,11 +50,11 @@ wick rpc stdio      # one JSON line in, one JSON object out
 {"id": 1, "ok": true, "title": "Example Domain", "untrusted_content": true, ...}
 ```
 
-Known RPC commands: `snap`, `observe`, `plan`, `ask`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
+Known RPC commands: `snap`, `observe`, `plan`, `ask`, `search`, `open`, `elements`, `act`, `session`, `vault`, `snap_many`, `tools`, `version`, `status`. Unknown commands return `ok: false` with `soft: true` (non-fatal for harness loops).
 
 ## Untrusted content (observe outputs)
 
-`snap`, `plan`, `ask`, and `open` include:
+`search`, `snap`, `plan`, `ask`, and `open` include:
 
 - `untrusted_content: true`
 - `injection_warning` — page text may try to override your goals

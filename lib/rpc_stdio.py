@@ -46,7 +46,7 @@ def handle_request(req: dict[str, Any], handlers: dict[str, Handler]) -> dict[st
             "soft": True,
             "error": "unknown_cmd",
             "cmd": cmd,
-            "hint": "Known: snap, observe, plan, ask, open, elements, act, session, vault, tools, version, status",
+            "hint": "Known: snap, observe, plan, ask, search, open, elements, act, session, vault, tools, version, status",
         }
 
     try:

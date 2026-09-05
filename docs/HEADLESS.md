@@ -16,11 +16,15 @@ Headless drops the human surface and keeps:
 ```
 Agent task
    │
+   ├─ search "query"
+   │     plain HTTP SERP (DuckDuckGo HTML / lite, or Wikipedia)
+   │     structured results — no Chromium, no pixels
+   │
    ├─ snap / plan / ask / open / tree / links / fetch
    │     headless Chromium (Playwright daemon, loopback CDP)
    │
    ├─ click / fill / cu / tabs / PDF
-   │     same Chromium session
+   │     same Chromium session (pixels only for cu / shot / PDF)
    │
    └─ never WAN-bind CDP; never paid browser SaaS required
 ```
@@ -47,7 +51,8 @@ Screenshots are the **expensive** path; prefer tree/markdown first.
 
 | Wick | Engine |
 |------|--------|
-| `snap` / `plan` / `ask` / `open` / `tree` / `links` / `batch` / `fetch` | Chromium observe |
+| `search` | HTTP SERP (no Chromium). `--chromium` if the HTML interstitial wins |
+| `snap` / `plan` / `ask` / `open` / `tree` / `links` / `batch` / `fetch` | Chromium when Playwright is present; static HTTP otherwise (`WICK_OBSERVE=http` to force) |
 | `ensure` / `start` | Chromium daemon on `127.0.0.1:9222` |
 | `metrics` | Chromium daemon status |
 | `act` / `shot` / `goto` / `pdf` / `tabs` | Same Chromium session |

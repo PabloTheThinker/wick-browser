@@ -1,0 +1,4 @@
+[
+  {"action": "search", "q": "example domain", "limit": 5},
+  {"action": "snap", "url": "https://example.com/", "profile": "micro"}
+]

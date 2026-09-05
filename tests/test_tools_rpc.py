@@ -59,6 +59,7 @@ def test_tools_export_shape():
         "wick_elements",
         "wick_vault",
         "wick_snap_many",
+        "wick_search",
     ):
         assert expected in names
     snap = next(t for t in tools if t["function"]["name"] == "wick_snap")

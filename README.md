@@ -7,6 +7,7 @@ Not a human browser with a side door for bots — a tool built so **agents** can
 *Headless Chromium. One JSON surface. No wasted motion.*
 
 ```bash
+wick search "example domain"                           # headless web search (no pixels)
 wick snap https://example.com/ --profile micro         # cheapest observe (tree only)
 wick plan https://example.com/ --fast                  # suggested next actions (cmd + why)
 wick ask  https://example.com/ --q "more information"  # filter targets by query — no LLM
@@ -19,7 +20,8 @@ wick act  click 'role=link[name="More information"]'   # act: hints resolve dire
 
 | Need | Wick |
 |------|------|
-| Agent-friendly page text | Markdown / semantic tree from headless Chromium |
+| Web search (no URL yet) | `wick search` — HTTP SERP, structured JSON, no pixels |
+| Agent-friendly page text | Markdown / semantic tree (Chromium, or static HTTP if Playwright is missing) |
 | Next-step planning | `plan` (goal-agnostic suggestions), `ask` (fuzzy target filter, no LLM) |
 | One engine | Chromium via Playwright — observe and act |
 | Tracker / ad lists | Chromium blocks a small built-in URL list + `wick-block-urls.txt`. EasyList files download but are not parsed |
@@ -54,8 +56,8 @@ Data directory: `~/.wick/` (override with `WICK_HOME`).
 ## Quick commands
 
 ```bash
-# Observe & plan
-wick ensure
+# Search, observe & plan
+wick search "example domain"  # headless SERP (no Chromium)
 wick snap URL --profile micro # cheapest situation report (tree only)
 wick snap URL --fast          # tree + excerpt in parallel
 wick snap-many URL URL…       # parallel observe
@@ -162,6 +164,8 @@ wick-browser/
 - [AGENTS.md](AGENTS.md) — **start here if you are an agent**
 - [docs/HERMES.md](docs/HERMES.md) — Hermes, Claude, ChatGPT, Grok (MCP + tools)
 - [docs/AGENT-BROWSER.md](docs/AGENT-BROWSER.md) — observe / act / session / playbook architecture  
+- [docs/SEARCH.md](docs/SEARCH.md) — headless web search for agents  
+
 - [ABOUT.md](ABOUT.md) — product story & non-goals  
 - [docs/SECURITY.md](docs/SECURITY.md) — CDP, shields honesty, proxy, `WICK_HOME`  
 - [docs/HEADLESS.md](docs/HEADLESS.md) — how headless works here  

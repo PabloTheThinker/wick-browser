@@ -179,6 +179,8 @@ def test_observe_fetch_uses_chromium(monkeypatch):
         }
 
     monkeypatch.setattr(wick, "chrome_fetch", fake_chrome)
+    monkeypatch.setattr(wick, "find_playwright_python", lambda: Path("/tmp/fake-python"))
+    monkeypatch.delenv("WICK_OBSERVE", raising=False)
     out = wick.observe_fetch("https://example.com/", dump="markdown")
     assert out["ok"] is True
     assert out["engine"] == "chromium"
