@@ -95,9 +95,10 @@ def test_search_payload_uses_parser(monkeypatch):
     spec.loader.exec_module(wick)
 
     html = (_FIX / "ddg-html.html").read_text(encoding="utf-8")
+    original = wick.wick_search.run_search
 
     def fake_run(q, **kw):
-        return search.run_search(q, html=html, via="http")
+        return original(q, html=html, via="http", engine=kw.get("engine"), limit=kw.get("limit") or 8)
 
     monkeypatch.setattr(wick.wick_search, "run_search", fake_run)
     out = wick.search_payload("example domain")

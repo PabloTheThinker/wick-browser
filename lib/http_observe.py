@@ -34,12 +34,9 @@ _HREF_RE = re.compile(r"""\bhref\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 _BUTTON_RE = re.compile(r"<button\b([^>]*)>(.*?)</button>", re.IGNORECASE | re.DOTALL)
 _INPUT_RE = re.compile(r"<input\b([^>]*)/?>", re.IGNORECASE)
 _TEXTAREA_RE = re.compile(r"<textarea\b([^>]*)>(.*?)</textarea>", re.IGNORECASE | re.DOTALL)
-_NAME_ATTR_RE = re.compile(
-    r"""\b(?:aria-label|title|placeholder|name|alt)\s*=\s*["']([^"']+)["']""",
-    re.IGNORECASE,
-)
 _TYPE_ATTR_RE = re.compile(r"""\btype\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 _VALUE_ATTR_RE = re.compile(r"""\bvalue\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
+_ATTR_KEYS = ("aria-label", "title", "placeholder", "alt", "name")
 _SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL)
 _STYLE_RE = re.compile(r"<style\b[^>]*>.*?</style>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -101,13 +98,15 @@ def parse_links(html: str, base: str) -> list[dict[str, str]]:
 
 
 def _attr_name(attrs: str, inner: str = "") -> str:
-    m = _NAME_ATTR_RE.search(attrs or "")
-    if m:
-        return _strip_text(m.group(1))[:80]
+    blob = attrs or ""
+    for key in _ATTR_KEYS:
+        m = re.search(rf"""\b{re.escape(key)}\s*=\s*["']([^"']+)["']""", blob, re.IGNORECASE)
+        if m:
+            return _strip_text(m.group(1))[:80]
     inner_t = _strip_text(inner)
     if inner_t:
         return inner_t[:80]
-    vm = _VALUE_ATTR_RE.search(attrs or "")
+    vm = _VALUE_ATTR_RE.search(blob)
     return _strip_text(vm.group(1))[:80] if vm else ""
 
 
